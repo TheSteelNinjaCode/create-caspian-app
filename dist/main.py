@@ -395,7 +395,8 @@ def register_single_route(url_pattern: str, file_path: str):
             route_dir,
             title,
             description,
-            context_data=full_context
+            context_data=full_context,
+            component_compiler=transform_components
         )
 
         html_output = transform_scripts(html_output)
