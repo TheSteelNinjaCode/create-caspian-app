@@ -1,0 +1,28 @@
+# Node modules
+node_modules/
+
+# virtual environment
+.venv/
+
+# Environment files
+.env
+.env.*
+
+# IDE-specific files
+.vscode/
+.idea/
+
+# OS-specific files
+.DS_Store # macOS
+Thumbs.db # Windows
+
+# Log files
+*.log
+
+# Backup and temporary files
+*.swp
+
+# Caspian settings files
+.casp/
+caches/
+settings/bs-config.json

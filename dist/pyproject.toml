@@ -1,0 +1,9 @@
+[tool.pyrefly]
+project-includes = ["main.py", "src/**"]
+search-path = [".", "src"]
+
+python-platform = "win32"
+
+[tool.pyrefly.errors]
+bad-assignment = false
+bad-return = false
