@@ -26,7 +26,7 @@ from casp.auth import (
     configure_auth,
 )
 from casp.rpc import register_rpc_routes
-from casp.layout import render_with_nested_layouts, string_env, load_layout, load_page
+from casp.layout import render_with_nested_layouts, string_env, load_template_file, render_page
 import hashlib
 
 load_dotenv()
@@ -309,7 +309,7 @@ def load_route_module(file_path: str):
 
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    setattr(module, 'load_page', load_page)
+    setattr(module, 'render_page', render_page)
     return module
 
 
@@ -383,7 +383,7 @@ def register_single_route(url_pattern: str, file_path: str):
             else:
                 content = str(result)
         else:
-            content = load_layout(file_path)
+            content = load_template_file(file_path)
 
         # Transform components
         content = transform_components(content, base_dir=route_dir)
