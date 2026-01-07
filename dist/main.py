@@ -1,6 +1,6 @@
 from casp.components_compiler import transform_components
 from casp.scripts_type import transform_scripts
-import json
+import inspect
 import os
 import importlib.util
 import mimetypes
@@ -351,7 +351,10 @@ def register_single_route(url_pattern: str, file_path: str):
                 raise AttributeError(
                     f"The file '{file_path}' is missing the required 'def page():' function.")
 
-            result = module.page(kwargs) if kwargs else module.page()
+            if inspect.iscoroutinefunction(module.page):
+                result = await (module.page(kwargs) if kwargs else module.page())
+            else:
+                result = module.page(kwargs) if kwargs else module.page()
 
             if isinstance(result, Response):
                 return result
