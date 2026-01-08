@@ -28,6 +28,7 @@ from casp.auth import (
 from casp.rpc import register_rpc_routes
 from casp.layout import render_with_nested_layouts, string_env, load_template_file, render_page
 import hashlib
+from casp.layout import _runtime_metadata
 
 load_dotenv()
 
@@ -324,32 +325,34 @@ def register_routes():
 
 def register_single_route(url_pattern: str, file_path: str):
     async def make_handler(request: Request):
-        kwargs = dict(request.path_params)
+        _runtime_metadata.set(None)
 
-        CacheHandler.is_cacheable = None
-        CacheHandler.ttl = 0
+        kwargs = dict(request.path_params)
         current_uri = request.url.path
 
+        # 1. Serving Cache (Fast path)
         if request.method == 'GET':
             cached_resp = CacheHandler.serve_cache(current_uri, DEFAULT_TTL)
             if cached_resp:
+                print(f"[Cache] Hit: {current_uri}")
                 return HTMLResponse(content=cached_resp)
 
         route_dir = os.path.dirname(file_path)
 
-        # IMPROVEMENT: Default to None.
-        # This allows layout.py to know if the page actually provided a value.
-        title = None
-        description = None
-        page_props = {}
+        page_metadata = {}
+        page_layout_props = {}
         content = ""
+
+        # Local variables for Cache Decision (Thread-Safe)
+        # Default: None (means "defer to global setting")
+        req_should_cache = None
+        req_cache_ttl = 0
 
         if file_path.endswith('.py'):
             module = load_route_module(file_path)
 
             if not hasattr(module, 'page'):
-                raise AttributeError(
-                    f"The file '{file_path}' is missing the required 'def page():' function.")
+                raise AttributeError(f"Missing 'def page():' in {file_path}")
 
             if inspect.iscoroutinefunction(module.page):
                 result = await (module.page(kwargs) if kwargs else module.page())
@@ -359,65 +362,78 @@ def register_single_route(url_pattern: str, file_path: str):
             if isinstance(result, Response):
                 return result
 
-            # 1. Try static module variables (returns None if missing)
-            title = getattr(module, 'title', None)
-            description = getattr(module, 'description', None)
+            # 2. CACHE CONFIGURATION (New DX)
+            # We look for the auto-registered 'cache_settings' object
+            cache_settings = getattr(module, 'cache_settings', None)
 
-            revalidate = getattr(module, 'revalidate', 0)
-            if revalidate > 0:
-                CacheHandler.is_cacheable = True
-                CacheHandler.ttl = revalidate
-            elif hasattr(module, 'is_cacheable'):
-                CacheHandler.is_cacheable = module.is_cacheable
+            if cache_settings:
+                req_should_cache = cache_settings.enabled
+                req_cache_ttl = cache_settings.ttl
 
-            # 2. Handle Tuple Return (HTML, Props) - Dynamic Overrides
             if isinstance(result, tuple):
                 content = str(result[0])
                 if len(result) >= 2 and isinstance(result[1], dict):
-                    dynamic_props = result[1]
-
-                    # Explicit dynamic props override static ones
-                    if 'title' in dynamic_props:
-                        title = dynamic_props.pop('title')
-                    if 'description' in dynamic_props:
-                        description = dynamic_props.pop('description')
-
-                    page_props = dynamic_props
+                    page_layout_props = result[1]
             else:
                 content = str(result)
+
+            # 3. Metadata logic
+            dynamic_meta = _runtime_metadata.get()
+            static_meta = getattr(module, 'metadata', None)
+
+            def extract_meta(obj):
+                d = {}
+                if not obj:
+                    return d
+                if obj.title:
+                    d['title'] = obj.title
+                if obj.description:
+                    d['description'] = obj.description
+                if obj.extra:
+                    d.update(obj.extra)
+                return d
+
+            page_metadata.update(extract_meta(static_meta))
+            page_metadata.update(extract_meta(dynamic_meta))
+
         else:
             content = load_template_file(file_path)
 
         # Transform components
         content = transform_components(content, base_dir=route_dir)
-        full_context = {**kwargs, "request": request, **page_props}
 
-        # 3. Render Layouts (Passing None allows layouts to fill in gaps)
+        full_context = {**kwargs, "request": request, **page_layout_props}
+
+        # Render
         html_output, root_layout_id = render_with_nested_layouts(
-            content,
-            route_dir,
-            title,
-            description,
+            children=content,
+            route_dir=route_dir,
+            page_metadata=page_metadata,
+            page_layout_props=page_layout_props,
             context_data=full_context,
             component_compiler=transform_components
         )
 
         html_output = transform_scripts(html_output)
 
-        # ... [Rest of the function: Response, Caching, etc.] ...
         response = HTMLResponse(content=html_output)
         response.headers['X-PP-Root-Layout'] = root_layout_id
 
+        # 4. Save to Cache Logic
+        # Determine final decision based on module config OR global env var
         should_cache = False
-        if CacheHandler.is_cacheable == True:
+
+        if req_should_cache is True:
             should_cache = True
-        elif CacheHandler.is_cacheable == False:
+        elif req_should_cache is False:
             should_cache = False
         else:
+            # Fallback to env var if module didn't specify
             should_cache = CACHE_ENABLED
 
         if should_cache and request.method == 'GET':
-            ttl_to_save = CacheHandler.ttl if CacheHandler.ttl > 0 else DEFAULT_TTL
+            # Use module TTL if set, else Global Default
+            ttl_to_save = req_cache_ttl if req_cache_ttl > 0 else DEFAULT_TTL
             CacheHandler.save_cache(current_uri, html_output, ttl_to_save)
 
         return response
@@ -446,11 +462,17 @@ async def custom_404_handler(request: Request, exc: StarletteHTTPException):
             with open(not_found_path, 'r', encoding='utf-8') as f:
                 content = f.read()
 
+            meta_title = "Page Not Found"
+            meta_description = "The page you are looking for does not exist."
+
             html_output, root_layout_id = render_with_nested_layouts(
                 children=content,
                 route_dir='src/app',
-                title='Page Not Found',
-                description='The page you are looking for does not exist.',
+                page_metadata={
+                    'title': meta_title,
+                    'description': meta_description
+                },
+                page_layout_props=None,
                 context_data={'request': request},
                 transform_fn=transform_scripts
             )
@@ -488,8 +510,11 @@ async def custom_general_exception_handler(request: Request, exc: Exception):
             html_output, root_layout_id = render_with_nested_layouts(
                 children=rendered_content,
                 route_dir='src/app',
-                title='Application Error',
-                description='An unexpected error occurred.',
+                page_metadata={
+                    'title': 'Application Error',
+                    'description': 'An unexpected error occurred.'
+                },
+                page_layout_props=None,
                 context_data=context_data,
                 transform_fn=transform_scripts
             )

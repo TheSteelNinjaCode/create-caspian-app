@@ -3,8 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>[[layout.title]]</title>
-    <meta name="description" content="[[layout.description]]" />
+    <title>[[metadata.title | default("Caspian App")]]</title>
+    <meta
+      name="description"
+      content="[[metadata.description | default('Powered by Caspian Framework')]]"
+    />
     <link rel="icon" href="/favicon.ico" type="image/x-icon" sizes="16x16" />
   </head>
 
