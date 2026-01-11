@@ -189,12 +189,22 @@ function analyzeFile(filePath: string, rootDir: string): ComponentMetadata[] {
           name = param.childForFieldName("name")?.text || "";
           defaultValue = param.childForFieldName("value")?.text;
         } else if (param.type === "typed_parameter") {
-          name = param.childForFieldName("name")?.text || "";
-          typeNode = param.childForFieldName("type");
+          const nameNode =
+            param.childForFieldName("name") ??
+            param.children.find((c) => c.type === "identifier") ??
+            null;
+
+          name = nameNode?.text || "";
+          typeNode =
+            param.childForFieldName("type") ??
+            param.children.find(
+              (c) => c.type !== "identifier" && c.type !== ":"
+            ) ??
+            null;
         } else if (param.type === "typed_default_parameter") {
           name = param.childForFieldName("name")?.text || "";
           defaultValue = param.childForFieldName("value")?.text;
-          typeNode = param.childForFieldName("type");
+          typeNode = param.childForFieldName("type") ?? null;
         }
 
         // Clean up quotes from default value
