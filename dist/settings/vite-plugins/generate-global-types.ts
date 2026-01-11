@@ -4,7 +4,7 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync } from "fs";
 import ts from "typescript";
 
 export function generateGlobalTypes(): Plugin {
-  const dtsPath = path.resolve(process.cwd(), ".pp", "global-functions.d.ts");
+  const dtsPath = path.resolve(process.cwd(), ".casp", "global-functions.d.ts");
 
   return {
     name: "generate-global-types",
