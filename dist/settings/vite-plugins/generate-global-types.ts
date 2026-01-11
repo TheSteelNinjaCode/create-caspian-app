@@ -29,10 +29,12 @@ export function generateGlobalTypes(): Plugin {
     },
   };
 }
+
 interface GlobalDeclaration {
   name: string;
   importPath: string;
   exportName: string;
+  isNamespace: boolean;
 }
 
 function parseGlobalSingletons(
@@ -47,7 +49,10 @@ function parseGlobalSingletons(
   );
 
   const globals: GlobalDeclaration[] = [];
-  const importMap = new Map<string, { path: string; originalName: string }>();
+  const importMap = new Map<
+    string,
+    { path: string; originalName: string; isNamespace: boolean }
+  >();
 
   sf.statements.forEach((stmt) => {
     if (ts.isImportDeclaration(stmt) && stmt.importClause) {
@@ -64,9 +69,24 @@ function parseGlobalSingletons(
             importMap.set(localName, {
               path: moduleSpecifier,
               originalName: importedName,
+              isNamespace: false,
             });
           });
+        } else if (ts.isNamespaceImport(stmt.importClause.namedBindings)) {
+          const localName = stmt.importClause.namedBindings.name.text;
+          importMap.set(localName, {
+            path: moduleSpecifier,
+            originalName: localName,
+            isNamespace: true,
+          });
         }
+      } else if (stmt.importClause.name) {
+        const localName = stmt.importClause.name.text;
+        importMap.set(localName, {
+          path: moduleSpecifier,
+          originalName: "default",
+          isNamespace: false,
+        });
       }
     }
   });
@@ -91,12 +111,12 @@ function parseGlobalSingletons(
               name,
               importPath: importInfo.path,
               exportName: importInfo.originalName,
+              isNamespace: importInfo.isNamespace,
             });
           }
         }
       }
     }
-
     ts.forEachChild(node, visit);
   }
 
@@ -114,82 +134,121 @@ function generateDtsWithTypeChecker(
     ts.sys.fileExists,
     "tsconfig.json"
   );
-
   const { config } = configPath
     ? ts.readConfigFile(configPath, ts.sys.readFile)
     : { config: {} };
-
-  const { options } = ts.parseJsonConfigFileContent(
+  const parsedConfig = ts.parseJsonConfigFileContent(
     config,
     ts.sys,
     process.cwd()
   );
 
-  const program = ts.createProgram([mainPath], options);
+  const program = ts.createProgram(
+    parsedConfig.fileNames,
+    parsedConfig.options
+  );
   const checker = program.getTypeChecker();
   const sourceFile = program.getSourceFile(mainPath);
 
   if (!sourceFile) {
-    console.warn("⚠️  Could not load main.ts for type checking");
     generateFallbackDts(globals, dtsPath);
     return;
   }
 
   const signatures = new Map<string, string>();
-
   const importMap = new Map<string, ts.ImportDeclaration>();
+
   sourceFile.statements.forEach((stmt) => {
-    if (ts.isImportDeclaration(stmt) && stmt.importClause?.namedBindings) {
-      if (ts.isNamedImports(stmt.importClause.namedBindings)) {
-        stmt.importClause.namedBindings.elements.forEach((element) => {
-          importMap.set(element.name.text, stmt);
-        });
+    if (ts.isImportDeclaration(stmt)) {
+      if (stmt.importClause?.namedBindings) {
+        if (ts.isNamedImports(stmt.importClause.namedBindings)) {
+          stmt.importClause.namedBindings.elements.forEach((element) => {
+            importMap.set(element.name.text, stmt);
+          });
+        } else if (ts.isNamespaceImport(stmt.importClause.namedBindings)) {
+          importMap.set(stmt.importClause.namedBindings.name.text, stmt);
+        }
+      } else if (stmt.importClause?.name) {
+        importMap.set(stmt.importClause.name.text, stmt);
       }
     }
   });
 
-  globals.forEach(({ name, exportName }) => {
-    try {
-      const importDecl = importMap.get(exportName);
-      if (!importDecl || !importDecl.importClause?.namedBindings) {
-        signatures.set(name, "(...args: any[]) => any");
-        return;
+  globals.forEach(({ name, exportName, importPath, isNamespace }) => {
+    // RESOLVE SIGNATURE
+    const isExternalLibrary =
+      !importPath.startsWith(".") && !importPath.startsWith("/");
+
+    if (isExternalLibrary) {
+      if (isNamespace) {
+        signatures.set(name, `typeof import("${importPath}")`);
+      } else {
+        signatures.set(name, `typeof import("${importPath}").${exportName}`);
       }
+      return;
+    }
 
-      if (ts.isNamedImports(importDecl.importClause.namedBindings)) {
-        const importSpec = importDecl.importClause.namedBindings.elements.find(
-          (el) => el.name.text === exportName
-        );
+    try {
+      const importDecl =
+        importMap.get(exportName === "default" ? name : exportName) ||
+        importMap.get(isNamespace ? name : exportName);
+      let symbol: ts.Symbol | undefined;
 
-        if (importSpec) {
-          const symbol = checker.getSymbolAtLocation(importSpec.name);
-          if (symbol) {
-            const type = checker.getTypeOfSymbolAtLocation(
-              symbol,
-              importSpec.name
+      if (importDecl && importDecl.importClause) {
+        if (importDecl.importClause.namedBindings) {
+          if (ts.isNamedImports(importDecl.importClause.namedBindings)) {
+            const importSpec =
+              importDecl.importClause.namedBindings.elements.find(
+                (el) =>
+                  (el.propertyName?.text || el.name.text) === exportName ||
+                  el.name.text === exportName
+              );
+            if (importSpec)
+              symbol = checker.getSymbolAtLocation(importSpec.name);
+          } else if (
+            ts.isNamespaceImport(importDecl.importClause.namedBindings)
+          ) {
+            symbol = checker.getSymbolAtLocation(
+              importDecl.importClause.namedBindings.name
             );
-            const signature = checker.typeToString(
-              type,
-              undefined,
-              ts.TypeFormatFlags.NoTruncation
-            );
-            signatures.set(name, signature);
-            return;
           }
+        } else if (importDecl.importClause.name) {
+          symbol = checker.getSymbolAtLocation(importDecl.importClause.name);
         }
       }
 
-      signatures.set(name, "(...args: any[]) => any");
+      if (symbol) {
+        const aliasedSymbol = checker.getAliasedSymbol(symbol);
+        const targetSymbol = aliasedSymbol || symbol;
+        const type = checker.getTypeOfSymbolAtLocation(
+          targetSymbol,
+          targetSymbol.valueDeclaration!
+        );
+        const signature = checker.typeToString(
+          type,
+          undefined,
+          ts.TypeFormatFlags.NoTruncation |
+            ts.TypeFormatFlags.UseFullyQualifiedType
+        );
+
+        if (signature !== "any") {
+          signatures.set(name, signature);
+          return;
+        }
+      }
     } catch (error) {
-      console.warn(`⚠️  Failed to extract type for ${name}:`, error);
-      signatures.set(name, "(...args: any[]) => any");
+      console.warn(`Failed to resolve type for ${name}`);
     }
+
+    // Fallback
+    signatures.set(name, "any");
   });
 
   const declarations = globals
-    .map(({ name }) => {
-      const sig = signatures.get(name) || "(...args: any[]) => any";
-      return `  const ${name}: ${sig};`;
+    .map(({ name, importPath }) => {
+      const sig = signatures.get(name) || "any";
+      // ⚡ FIX: Inject the source path as a comment for the Extension to read
+      return `  // @source: ${importPath}\n  const ${name}: ${sig};`;
     })
     .join("\n");
 
@@ -213,17 +272,17 @@ export {};
 `;
 
   const dir = path.dirname(dtsPath);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(dtsPath, content, "utf-8");
   console.log(`✅ Generated ${path.relative(process.cwd(), dtsPath)}`);
 }
 
 function generateFallbackDts(globals: GlobalDeclaration[], dtsPath: string) {
   const declarations = globals
-    .map(({ name }) => `  const ${name}: (...args: any[]) => any;`)
+    .map(
+      ({ name, importPath }) =>
+        `  // @source: ${importPath}\n  const ${name}: any;`
+    )
     .join("\n");
 
   const windowDeclarations = globals
@@ -238,9 +297,7 @@ ${declarations}
 ${windowDeclarations}
   }
 }
-
 export {};
 `;
-
   writeFileSync(dtsPath, content, "utf-8");
 }

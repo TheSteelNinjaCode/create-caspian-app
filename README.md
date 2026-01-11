@@ -352,11 +352,11 @@ npx create-caspian-app
 
 ### Useful flags
 
+- `--backend-only` skip frontend assets
 - `--tailwindcss` Tailwind CSS v4 + PostCSS + `globals.css`
 - `--typescript` TypeScript support with Vite + `tsconfig.json`
-- `--websocket` WebSocket server scaffolding
 - `--mcp` Model Context Protocol server scaffolding (AI Agents)
-- `--backend-only` skip frontend assets
+- `--prisma` Prisma ORM integration + sample schema
 
 ### Code generation
 

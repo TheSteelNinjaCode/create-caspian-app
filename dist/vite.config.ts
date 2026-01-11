@@ -36,6 +36,7 @@ export default defineConfig(({ command, mode }) => ({
     emptyOutDir: false,
     minify: "esbuild",
     sourcemap: false,
+    chunkSizeWarningLimit: 1000,
     watch:
       command === "build" && mode === "development"
         ? { exclude: VITE_WATCH_EXCLUDE }
@@ -47,6 +48,15 @@ export default defineConfig(({ command, mode }) => ({
         entryFileNames: "[name].js",
         chunkFileNames: "chunks/[name]-[hash].js",
         assetFileNames: "assets/[name]-[hash][extname]",
+        manualChunks(id) {
+          if (id.includes("node_modules")) {
+            return id
+              .toString()
+              .split("node_modules/")[1]
+              .split("/")[0]
+              .toString();
+          }
+        },
       },
     },
   },

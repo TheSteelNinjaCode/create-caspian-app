@@ -1,6 +1,6 @@
 {
   "name": "create-caspian-app",
-  "version": "0.0.19",
+  "version": "0.0.20",
   "description": "Scaffold a new Caspian project (FastAPI-powered reactive Python framework).",
   "main": "dist/index.js",
   "type": "module",
