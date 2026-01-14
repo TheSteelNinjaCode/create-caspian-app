@@ -26,7 +26,7 @@ from casp.auth import (
     configure_auth,
 )
 from casp.rpc import register_rpc_routes
-from casp.layout import render_with_nested_layouts, string_env, load_template_file, render_page
+from casp.layout import render_with_nested_layouts, string_env, load_template_file, render_page, _runtime_injections
 import hashlib
 from casp.layout import _runtime_metadata
 
@@ -326,6 +326,7 @@ def register_routes():
 def register_single_route(url_pattern: str, file_path: str):
     async def make_handler(request: Request):
         _runtime_metadata.set(None)
+        _runtime_injections.set({"head": [], "body": []})
 
         kwargs = dict(request.path_params)
         current_uri = request.url.path
