@@ -71,7 +71,7 @@ function extractDictKeysFromNode(node: Parser.SyntaxNode): string[] {
 }
 
 /**
- * Extracts values from a Literal[...] type node
+ * Extracts values from a Literal[...] or types from Union[...] node
  */
 function extractLiteralValues(node: Parser.SyntaxNode): string[] {
   const values: string[] = [];
@@ -85,19 +85,52 @@ function extractLiteralValues(node: Parser.SyntaxNode): string[] {
     typeName = node.children.find((c) => c.type === "identifier")?.text;
   }
 
-  if (typeName !== "Literal") return values;
+  // --- Handle Literal[...] ---
+  if (typeName === "Literal") {
+    const findValues = (n: Parser.SyntaxNode) => {
+      if (n.type === "string") {
+        // Strip quotes from strings
+        values.push(n.text.replace(/^['"]|['"]$/g, ""));
+      } else if (
+        ["integer", "float", "true", "false", "none"].includes(n.type)
+      ) {
+        // Capture raw values for primitives (e.g. Literal[1, True, None])
+        values.push(n.text);
+      }
+      for (const child of n.children) {
+        findValues(child);
+      }
+    };
+    findValues(node);
+  }
 
-  const findStrings = (n: Parser.SyntaxNode) => {
-    if (n.type === "string") {
-      values.push(n.text.replace(/^['"]|['"]$/g, ""));
-      return;
-    }
-    for (const child of n.children) {
-      findStrings(child);
-    }
-  };
+  // --- Handle Union[...] ---
+  else if (typeName === "Union") {
+    for (const child of node.children) {
+      // Skip the "Union" keyword itself and punctuation
+      if (
+        (child.type === "identifier" && child.text === "Union") ||
+        ["[", "]", ","].includes(child.type)
+      ) {
+        continue;
+      }
 
-  findStrings(node);
+      // Capture Types (bool, str, etc.) and None
+      if (
+        child.type === "identifier" ||
+        child.type === "none" ||
+        child.type === "type" ||
+        child.type === "primitive_type"
+      ) {
+        values.push(child.text);
+      }
+      // Recursively handle nested structures (e.g. Union[str, Literal["a"]])
+      else if (child.type === "subscript" || child.type === "generic_type") {
+        values.push(...extractLiteralValues(child));
+      }
+    }
+  }
+
   return values;
 }
 
