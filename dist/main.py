@@ -355,10 +355,26 @@ def register_single_route(url_pattern: str, file_path: str):
             if not hasattr(module, 'page'):
                 raise AttributeError(f"Missing 'def page():' in {file_path}")
 
+            # === INTELLIGENT ARGUMENT BINDING ===
+            # Detects if the page function needs 'request' or traditional kwargs
+            sig = inspect.signature(module.page)
+            call_kwargs = {}
+            call_args = []
+
+            # Legacy support: If path params exist, pass them as first positional arg
+            # UNLESS the function signature looks like it only wants request
+            if kwargs:
+                call_args.append(kwargs)
+
+            # Injection support: If 'request' is in signature, pass it
+            if 'request' in sig.parameters:
+                call_kwargs['request'] = request
+
             if inspect.iscoroutinefunction(module.page):
-                result = await (module.page(kwargs) if kwargs else module.page())
+                result = await module.page(*call_args, **call_kwargs)
             else:
-                result = module.page(kwargs) if kwargs else module.page()
+                result = module.page(*call_args, **call_kwargs)
+            # ====================================
 
             if isinstance(result, Response):
                 return result
