@@ -7,7 +7,6 @@ import mimetypes
 import secrets
 import traceback
 from pathlib import Path
-from urllib.parse import urlparse
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse
 from starlette.middleware.sessions import SessionMiddleware
@@ -26,18 +25,18 @@ from casp.auth import (
     configure_auth,
 )
 from casp.rpc import register_rpc_routes
-from casp.layout import render_with_nested_layouts, string_env, load_template_file, render_page, _runtime_injections
+from casp.layout import render_with_nested_layouts, string_env, load_template_file, render_page, _runtime_injections, _runtime_metadata
 import hashlib
-from casp.layout import _runtime_metadata
+from casp.streaming import SSE
 
 load_dotenv()
-
 cfg = get_config()
-
 
 # ====
 # AUTH CONFIGURATION (App behavior - customize here)
 # ====
+
+
 def setup_auth():
     """
     Configure authentication behavior.
@@ -87,9 +86,7 @@ def setup_auth():
     )
 
 
-# Initialize auth configuration
 setup_auth()
-
 
 app = FastAPI(
     title=cfg.projectName,
@@ -108,10 +105,10 @@ IS_PRODUCTION = os.getenv('APP_ENV') == 'production'
 CACHE_ENABLED = os.getenv('CACHE_ENABLED', 'false').lower() == 'true'
 DEFAULT_TTL = int(os.getenv('CACHE_TTL', 600))
 
-
 # ====
 # Static File Routes
 # ====
+
 
 @app.get('/css/{filename:path}')
 async def serve_css(filename: str):
@@ -145,24 +142,21 @@ async def favicon():
         return Response(status_code=404)
     return FileResponse(file_path, media_type='image/x-icon')
 
-
 # ====
 # Pure ASGI Middleware Classes
 # ====
 
+
 class CSRFMiddleware:
     """CSRF middleware that properly handles session modifications."""
 
-    def __init__(self, app: ASGIApp):
-        self.app = app
+    def __init__(self, app: ASGIApp): self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-
         request = Request(scope, receive, send)
-
         csrf_token = request.session.get("csrf_token")
         if not csrf_token:
             csrf_token = secrets.token_hex(32)
@@ -170,120 +164,77 @@ class CSRFMiddleware:
 
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
-                headers = dict(message.get("headers", []))
                 cookie_value = f"pp_csrf={csrf_token}; Path=/; SameSite=Lax"
                 if IS_PRODUCTION:
                     cookie_value += "; Secure"
-
                 new_headers = list(message.get("headers", []))
                 new_headers.append((b"set-cookie", cookie_value.encode()))
                 message = {**message, "headers": new_headers}
             await send(message)
-
         await self.app(scope, receive, send_wrapper)
 
 
 class AuthMiddleware:
     """Auth middleware using pure ASGI pattern for proper session handling."""
 
-    def __init__(self, app: ASGIApp):
-        self.app = app
+    def __init__(self, app: ASGIApp): self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-
         request = Request(scope, receive, send)
         path = request.url.path
-
-        # Skip for static files
         if path.startswith(('/css/', '/js/', '/assets/', '/favicon.ico')):
             await self.app(scope, receive, send)
             return
-
-        # Initialize state manager and auth context
         StateManager.init(request)
         Auth.set_request(request)
         auth_inst = Auth.get_instance()
-        settings = auth_inst.settings
-
-        # Handle OAuth provider routes
         providers = Auth.get_providers()
         if providers:
             oauth_response = auth_inst.auth_providers(*providers)
             if oauth_response:
                 await oauth_response(scope, receive, send)
                 return
-
-        # Public routes - allow through
         if auth_inst.is_public_route(path):
             await self.app(scope, receive, send)
             return
-
-        # Auth routes (signin/signup) - redirect if already authenticated
         if auth_inst.is_auth_route(path):
             if auth_inst.is_authenticated():
-                response = RedirectResponse(
-                    url=settings.default_signin_redirect,
-                    status_code=303
-                )
-                await response(scope, receive, send)
+                await RedirectResponse(url=auth_inst.settings.default_signin_redirect, status_code=303)(scope, receive, send)
                 return
             await self.app(scope, receive, send)
             return
-
-        # Role-based route check
-        if settings.is_role_based:
+        if auth_inst.settings.is_role_based:
             required_roles = auth_inst.get_required_roles(path)
             if required_roles:
                 if not auth_inst.is_authenticated():
-                    response = RedirectResponse(
-                        url=f'/signin?next={path}',
-                        status_code=303
-                    )
-                    await response(scope, receive, send)
+                    await RedirectResponse(url=f'/signin?next={path}', status_code=303)(scope, receive, send)
                     return
-
-                user = auth_inst.get_payload()
-                if not auth_inst.check_role(user, required_roles):
-                    response = RedirectResponse(
-                        url='/unauthorized',
-                        status_code=303
-                    )
-                    await response(scope, receive, send)
+                if not auth_inst.check_role(auth_inst.get_payload(), required_roles):
+                    await RedirectResponse(url='/unauthorized', status_code=303)(scope, receive, send)
                     return
-
-        # Private routes - redirect to signin if not authenticated
         if auth_inst.is_private_route(path):
             if not auth_inst.is_authenticated():
-                if settings.on_auth_failure:
-                    response = settings.on_auth_failure(request)
-                    await response(scope, receive, send)
+                if auth_inst.settings.on_auth_failure:
+                    await auth_inst.settings.on_auth_failure(request)(scope, receive, send)
                     return
-                response = RedirectResponse(
-                    url=f'/signin?next={path}',
-                    status_code=303
-                )
-                await response(scope, receive, send)
+                await RedirectResponse(url=f'/signin?next={path}', status_code=303)(scope, receive, send)
                 return
-
         await self.app(scope, receive, send)
 
 
 class RPCMiddleware:
     """RPC middleware using pure ASGI pattern."""
 
-    def __init__(self, app: ASGIApp):
-        self.app = app
+    def __init__(self, app: ASGIApp): self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-
         request = Request(scope, receive, send)
-
         if request.headers.get('X-PP-RPC') == 'true' and request.method == 'POST':
             from casp.rpc import _handle_rpc_request
             session = dict(request.session) if hasattr(
@@ -291,23 +242,18 @@ class RPCMiddleware:
             response = await _handle_rpc_request(request, session)
             await response(scope, receive, send)
             return
-
         await self.app(scope, receive, send)
-
 
 # ====
 # Route Registration
 # ====
 
+
 def load_route_module(file_path: str):
-    # IMPROVEMENT 1: Generate a unique name for the module based on the file path.
-    # This ensures that tracebacks reference a unique ID instead of just "route_module".
     unique_id = hashlib.md5(file_path.encode()).hexdigest()[:8]
     module_name = f"page_{unique_id}"
-
     spec = importlib.util.spec_from_file_location(module_name, file_path)
     assert spec is not None and spec.loader is not None, f"Cannot load spec for {file_path}"
-
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     setattr(module, 'render_page', render_page)
@@ -331,42 +277,30 @@ def register_single_route(url_pattern: str, file_path: str):
         kwargs = dict(request.path_params)
         current_uri = request.url.path
 
-        # 1. Serving Cache (Fast path)
+        # 1. Cache Check (Fast Path)
         if request.method == 'GET':
             cached_resp = CacheHandler.serve_cache(current_uri, DEFAULT_TTL)
             if cached_resp:
-                print(f"[Cache] Hit: {current_uri}")
                 return HTMLResponse(content=cached_resp)
 
         route_dir = os.path.dirname(file_path)
-
         page_metadata = {}
         page_layout_props = {}
         content = ""
 
-        # Local variables for Cache Decision (Thread-Safe)
-        # Default: None (means "defer to global setting")
         req_should_cache = None
         req_cache_ttl = 0
 
         if file_path.endswith('.py'):
             module = load_route_module(file_path)
-
             if not hasattr(module, 'page'):
                 raise AttributeError(f"Missing 'def page():' in {file_path}")
 
-            # === INTELLIGENT ARGUMENT BINDING ===
-            # Detects if the page function needs 'request' or traditional kwargs
             sig = inspect.signature(module.page)
             call_kwargs = {}
             call_args = []
-
-            # Legacy support: If path params exist, pass them as first positional arg
-            # UNLESS the function signature looks like it only wants request
             if kwargs:
                 call_args.append(kwargs)
-
-            # Injection support: If 'request' is in signature, pass it
             if 'request' in sig.parameters:
                 call_kwargs['request'] = request
 
@@ -374,15 +308,14 @@ def register_single_route(url_pattern: str, file_path: str):
                 result = await module.page(*call_args, **call_kwargs)
             else:
                 result = module.page(*call_args, **call_kwargs)
-            # ====================================
 
             if isinstance(result, Response):
                 return result
 
-            # 2. CACHE CONFIGURATION (New DX)
-            # We look for the auto-registered 'cache_settings' object
-            cache_settings = getattr(module, 'cache_settings', None)
+            if inspect.isasyncgen(result) or inspect.isgenerator(result):
+                return SSE(result)
 
+            cache_settings = getattr(module, 'cache_settings', None)
             if cache_settings:
                 req_should_cache = cache_settings.enabled
                 req_cache_ttl = cache_settings.ttl
@@ -394,7 +327,6 @@ def register_single_route(url_pattern: str, file_path: str):
             else:
                 content = str(result)
 
-            # 3. Metadata logic
             dynamic_meta = _runtime_metadata.get()
             static_meta = getattr(module, 'metadata', None)
 
@@ -409,19 +341,14 @@ def register_single_route(url_pattern: str, file_path: str):
                 if obj.extra:
                     d.update(obj.extra)
                 return d
-
             page_metadata.update(extract_meta(static_meta))
             page_metadata.update(extract_meta(dynamic_meta))
-
         else:
             content = load_template_file(file_path)
 
-        # Transform components
         content = transform_components(content, base_dir=route_dir)
-
         full_context = {**kwargs, "request": request, **page_layout_props}
 
-        # Render
         html_output, root_layout_id = render_with_nested_layouts(
             children=content,
             route_dir=route_dir,
@@ -432,24 +359,19 @@ def register_single_route(url_pattern: str, file_path: str):
         )
 
         html_output = transform_scripts(html_output)
-
         response = HTMLResponse(content=html_output)
         response.headers['X-PP-Root-Layout'] = root_layout_id
 
-        # 4. Save to Cache Logic
-        # Determine final decision based on module config OR global env var
+        # Cache Save Logic
         should_cache = False
-
         if req_should_cache is True:
             should_cache = True
         elif req_should_cache is False:
             should_cache = False
         else:
-            # Fallback to env var if module didn't specify
             should_cache = CACHE_ENABLED
 
         if should_cache and request.method == 'GET':
-            # Use module TTL if set, else Global Default
             ttl_to_save = req_cache_ttl if req_cache_ttl > 0 else DEFAULT_TTL
             CacheHandler.save_cache(current_uri, html_output, ttl_to_save)
 
@@ -461,92 +383,59 @@ def register_single_route(url_pattern: str, file_path: str):
                       'GET', 'POST'], name=endpoint)
 
 
-# Register routes first
 register_routes()
 register_rpc_routes(app)
-
 
 # ====
 # Custom Exception Handlers (404 & 500)
 # ====
 
+
 @app.exception_handler(StarletteHTTPException)
 async def custom_404_handler(request: Request, exc: StarletteHTTPException):
     if exc.status_code == 404:
         not_found_path = os.path.join('src', 'app', 'not-found.html')
-
         if os.path.exists(not_found_path):
             with open(not_found_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-
-            meta_title = "Page Not Found"
-            meta_description = "The page you are looking for does not exist."
-
             html_output, root_layout_id = render_with_nested_layouts(
-                children=content,
-                route_dir='src/app',
-                page_metadata={
-                    'title': meta_title,
-                    'description': meta_description
-                },
-                page_layout_props=None,
-                context_data={'request': request},
-                transform_fn=transform_scripts
+                children=content, route_dir='src/app',
+                page_metadata={'title': "Page Not Found",
+                               'description': "The page you are looking for does not exist."},
+                page_layout_props=None, context_data={'request': request}, transform_fn=transform_scripts
             )
-
-            response = HTMLResponse(content=html_output, status_code=404)
-            response.headers['X-PP-Root-Layout'] = root_layout_id
-            return response
-
+            resp = HTMLResponse(content=html_output, status_code=404)
+            resp.headers['X-PP-Root-Layout'] = root_layout_id
+            return resp
     return HTMLResponse(content=f"<h1>{exc.detail}</h1>", status_code=exc.status_code)
 
 
 @app.exception_handler(Exception)
 async def custom_general_exception_handler(request: Request, exc: Exception):
     print(traceback.format_exc())
-
     error_message = str(exc)
     error_trace = traceback.format_exc() if not IS_PRODUCTION else None
-
     error_page_path = os.path.join('src', 'app', 'error.html')
-
     if os.path.exists(error_page_path):
         with open(error_page_path, 'r', encoding='utf-8') as f:
             raw_content = f.read()
-
-        context_data = {
-            'request': request,
-            'error_message': error_message,
-            'error_trace': error_trace
-        }
-
+        context_data = {'request': request,
+                        'error_message': error_message, 'error_trace': error_trace}
         try:
             rendered_content = string_env.from_string(
                 raw_content).render(**context_data)
-
             html_output, root_layout_id = render_with_nested_layouts(
-                children=rendered_content,
-                route_dir='src/app',
-                page_metadata={
-                    'title': 'Application Error',
-                    'description': 'An unexpected error occurred.'
-                },
-                page_layout_props=None,
-                context_data=context_data,
-                transform_fn=transform_scripts
+                children=rendered_content, route_dir='src/app',
+                page_metadata={'title': 'Application Error',
+                               'description': 'An unexpected error occurred.'},
+                page_layout_props=None, context_data=context_data, transform_fn=transform_scripts
             )
-
-            response = HTMLResponse(content=html_output, status_code=500)
-            response.headers['X-PP-Root-Layout'] = root_layout_id
-            return response
+            resp = HTMLResponse(content=html_output, status_code=500)
+            resp.headers['X-PP-Root-Layout'] = root_layout_id
+            return resp
         except Exception as render_exc:
             print("Error rendering error.html:", render_exc)
-
-    return HTMLResponse(
-        content=f"<h1>500 - Internal Server Error</h1><p>{error_message}</p>",
-        status_code=500
-    )
-
+    return HTMLResponse(content=f"<h1>500 - Internal Server Error</h1><p>{error_message}</p>", status_code=500)
 
 # ====
 # Middleware Order (LAST added runs FIRST)
@@ -564,7 +453,6 @@ app.add_middleware(
     https_only=IS_PRODUCTION,
     path='/',
 )
-
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5091))
