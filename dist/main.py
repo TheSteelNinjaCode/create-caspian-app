@@ -25,9 +25,17 @@ from casp.auth import (
     configure_auth,
 )
 from casp.rpc import register_rpc_routes
-from casp.layout import render_with_nested_layouts, string_env, load_template_file, render_page, _runtime_injections, _runtime_metadata
+from casp.layout import (
+    render_with_nested_layouts,
+    string_env,
+    load_template_file,
+    render_page,
+    _runtime_injections,
+    _runtime_metadata,
+)
 import hashlib
 from casp.streaming import SSE
+from typing import Any, Optional, get_args, get_origin, Union
 
 load_dotenv()
 cfg = get_config()
@@ -192,6 +200,7 @@ class AuthMiddleware:
         Auth.set_request(request)
         auth_inst = Auth.get_instance()
         providers = Auth.get_providers()
+
         if providers:
             oauth_response = auth_inst.auth_providers(*providers)
             if oauth_response:
@@ -202,10 +211,14 @@ class AuthMiddleware:
             return
         if auth_inst.is_auth_route(path):
             if auth_inst.is_authenticated():
-                await RedirectResponse(url=auth_inst.settings.default_signin_redirect, status_code=303)(scope, receive, send)
+                await RedirectResponse(
+                    url=auth_inst.settings.default_signin_redirect,
+                    status_code=303
+                )(scope, receive, send)
                 return
             await self.app(scope, receive, send)
             return
+
         if auth_inst.settings.is_role_based:
             required_roles = auth_inst.get_required_roles(path)
             if required_roles:
@@ -215,6 +228,7 @@ class AuthMiddleware:
                 if not auth_inst.check_role(auth_inst.get_payload(), required_roles):
                     await RedirectResponse(url='/unauthorized', status_code=303)(scope, receive, send)
                     return
+
         if auth_inst.is_private_route(path):
             if not auth_inst.is_authenticated():
                 if auth_inst.settings.on_auth_failure:
@@ -222,6 +236,7 @@ class AuthMiddleware:
                     return
                 await RedirectResponse(url=f'/signin?next={path}', status_code=303)(scope, receive, send)
                 return
+
         await self.app(scope, receive, send)
 
 
@@ -258,6 +273,75 @@ def load_route_module(file_path: str):
     spec.loader.exec_module(module)
     setattr(module, 'render_page', render_page)
     return module
+
+
+def _unwrap_optional(annotation: Any) -> Any:
+    """
+    Optional[T] is Union[T, NoneType]. Return T when applicable.
+    """
+    origin = get_origin(annotation)
+    if origin is Union:
+        args = [a for a in get_args(annotation) if a is not type(None)]
+        if len(args) == 1:
+            return args[0]
+    return annotation
+
+
+def _coerce_scalar(value: Optional[str], annotation: Any) -> Any:
+    """
+    Coerce a single query value based on annotation (best-effort).
+    If value is None -> returns None.
+    If coercion fails -> returns original string.
+    """
+    if value is None:
+        return None
+
+    ann = _unwrap_optional(annotation)
+
+    try:
+        if ann is inspect._empty or ann is str or ann is Any:
+            return value
+        if ann is int:
+            return int(value)
+        if ann is float:
+            return float(value)
+        if ann is bool:
+            v = value.strip().lower()
+            if v in ("1", "true", "t", "yes", "y", "on"):
+                return True
+            if v in ("0", "false", "f", "no", "n", "off"):
+                return False
+            return bool(value)
+        return value
+    except Exception:
+        return value
+
+
+def _coerce_query_param(request: Request, name: str, param: inspect.Parameter) -> Any:
+    """
+    Supports:
+      - scalar types: str/int/float/bool/Optional[...]
+      - list types: list[str], list[int], etc. via ?x=a&x=b
+      - Optional[list[T]]
+    """
+    ann = param.annotation
+    origin = get_origin(ann)
+
+    # list[T]
+    if origin is list:
+        inner = get_args(ann)[0] if get_args(ann) else str
+        values = request.query_params.getlist(name)
+        return [_coerce_scalar(v, inner) for v in values]
+
+    # Optional[list[T]] -> Union[list[T], None]
+    unwrapped = _unwrap_optional(ann)
+    if get_origin(unwrapped) is list:
+        inner = get_args(unwrapped)[0] if get_args(unwrapped) else str
+        values = request.query_params.getlist(name)
+        return [_coerce_scalar(v, inner) for v in values]
+
+    # scalar
+    return _coerce_scalar(request.query_params.get(name), ann)
 
 
 def register_routes():
@@ -299,10 +383,22 @@ def register_single_route(url_pattern: str, file_path: str):
             sig = inspect.signature(module.page)
             call_kwargs = {}
             call_args = []
+
             if kwargs:
                 call_args.append(kwargs)
             if 'request' in sig.parameters:
                 call_kwargs['request'] = request
+
+            for name, param in sig.parameters.items():
+                if name in call_kwargs:
+                    continue
+                if name in ("kwargs",):
+                    continue
+                if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                    continue
+                if name in request.query_params:
+                    call_kwargs[name] = _coerce_query_param(
+                        request, name, param)
 
             if inspect.iscoroutinefunction(module.page):
                 result = await module.page(*call_args, **call_kwargs)
@@ -341,6 +437,7 @@ def register_single_route(url_pattern: str, file_path: str):
                 if obj.extra:
                     d.update(obj.extra)
                 return d
+
             page_metadata.update(extract_meta(static_meta))
             page_metadata.update(extract_meta(dynamic_meta))
         else:
@@ -399,10 +496,15 @@ async def custom_404_handler(request: Request, exc: StarletteHTTPException):
             with open(not_found_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             html_output, root_layout_id = render_with_nested_layouts(
-                children=content, route_dir='src/app',
-                page_metadata={'title': "Page Not Found",
-                               'description': "The page you are looking for does not exist."},
-                page_layout_props=None, context_data={'request': request}, transform_fn=transform_scripts
+                children=content,
+                route_dir='src/app',
+                page_metadata={
+                    'title': "Page Not Found",
+                    'description': "The page you are looking for does not exist."
+                },
+                page_layout_props=None,
+                context_data={'request': request},
+                transform_fn=transform_scripts
             )
             resp = HTMLResponse(content=html_output, status_code=404)
             resp.headers['X-PP-Root-Layout'] = root_layout_id
@@ -425,17 +527,25 @@ async def custom_general_exception_handler(request: Request, exc: Exception):
             rendered_content = string_env.from_string(
                 raw_content).render(**context_data)
             html_output, root_layout_id = render_with_nested_layouts(
-                children=rendered_content, route_dir='src/app',
-                page_metadata={'title': 'Application Error',
-                               'description': 'An unexpected error occurred.'},
-                page_layout_props=None, context_data=context_data, transform_fn=transform_scripts
+                children=rendered_content,
+                route_dir='src/app',
+                page_metadata={
+                    'title': 'Application Error',
+                    'description': 'An unexpected error occurred.'
+                },
+                page_layout_props=None,
+                context_data=context_data,
+                transform_fn=transform_scripts
             )
             resp = HTMLResponse(content=html_output, status_code=500)
             resp.headers['X-PP-Root-Layout'] = root_layout_id
             return resp
         except Exception as render_exc:
             print("Error rendering error.html:", render_exc)
-    return HTMLResponse(content=f"<h1>500 - Internal Server Error</h1><p>{error_message}</p>", status_code=500)
+    return HTMLResponse(
+        content=f"<h1>500 - Internal Server Error</h1><p>{error_message}</p>",
+        status_code=500
+    )
 
 # ====
 # Middleware Order (LAST added runs FIRST)
