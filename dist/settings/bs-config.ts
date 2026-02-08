@@ -72,7 +72,7 @@ const pipeline = new DebouncedWorker(
       const filesList = JSON.parse(readFileSync(filesListPath, "utf-8"));
       const routeFiles = filesList.filter(
         (f: string) =>
-          f.startsWith("./src/") && (f.endsWith(".py") || f.endsWith(".html"))
+          f.startsWith("./src/") && (f.endsWith(".py") || f.endsWith(".html")),
       );
 
       const routesChanged =
@@ -82,8 +82,8 @@ const pipeline = new DebouncedWorker(
       if (previousRouteFiles.length > 0 && routesChanged) {
         console.log(
           chalk.yellow(
-            "→ Structure changed (New/Deleted file), restarting Python server..."
-          )
+            "→ Structure changed (New/Deleted file), restarting Python server...",
+          ),
         );
         await restartPythonServer(pythonPort);
         const isReady = await waitForPort(pythonPort);
@@ -97,7 +97,7 @@ const pipeline = new DebouncedWorker(
     }
   },
   350,
-  "bs-pipeline"
+  "bs-pipeline",
 );
 
 function updateRouteFilesCache() {
@@ -106,7 +106,7 @@ function updateRouteFilesCache() {
     const filesList = JSON.parse(readFileSync(filesListPath, "utf-8"));
     previousRouteFiles = filesList.filter(
       (f: string) =>
-        f.startsWith("./src/") && (f.endsWith(".py") || f.endsWith(".html"))
+        f.startsWith("./src/") && (f.endsWith(".py") || f.endsWith(".html")),
     );
   }
 }
@@ -117,27 +117,12 @@ const publicPipeline = new DebouncedWorker(
     if (bs.active) bs.reload();
   },
   350,
-  "bs-public-pipeline"
+  "bs-public-pipeline",
 );
 
 (async () => {
   bsPort = await getAvailablePort(5090);
-
   pythonPort = await getAvailablePort(bsPort + 10);
-
-  console.log("");
-  console.log(chalk.green.bold("✔ Ports Configured:"));
-  console.log(
-    `  ${chalk.blue.bold("Frontend (BrowserSync):")} ${chalk.magenta(
-      `http://localhost:${bsPort}`
-    )}`
-  );
-  console.log(
-    `  ${chalk.yellow.bold("Backend (Python):")}       ${chalk.magenta(
-      `http://localhost:${pythonPort}`
-    )}`
-  );
-  console.log("");
 
   updateRouteFilesCache();
 
@@ -240,37 +225,27 @@ const publicPipeline = new DebouncedWorker(
       const uiUrl = urls.get("ui");
       const uiExtUrl = urls.get("ui-external");
 
+      console.log("");
+      console.log(chalk.green.bold("✔ Ports Configured:"));
       console.log(
-        `${chalk.magenta("[Browsersync]")} ${chalk.cyan(
-          "Proxying:"
-        )} ${chalk.magenta(`http://localhost:${pythonPort}`)}`
+        `  ${chalk.blue.bold("Frontend (BrowserSync):")} ${chalk.magenta(localUrl)}`,
       );
       console.log(
-        `${chalk.magenta("[Browsersync]")} ${chalk.bold("Access URLs:")}`
+        `  ${chalk.yellow.bold("Backend (Python):")}       ${chalk.magenta(
+          `http://localhost:${pythonPort}`,
+        )}`,
       );
       console.log(chalk.gray(" ------------------------------------"));
-
-      console.log(`       ${chalk.bold("Local:")} ${chalk.magenta(localUrl)}`);
 
       if (externalUrl) {
         console.log(
-          `    ${chalk.bold("External:")} ${chalk.magenta(externalUrl)}`
+          `    ${chalk.bold("External:")} ${chalk.magenta(externalUrl)}`,
         );
       }
-
-      console.log(chalk.gray(" ------------------------------------"));
 
       if (uiUrl) {
         console.log(`          ${chalk.bold("UI:")} ${chalk.magenta(uiUrl)}`);
       }
-
-      if (uiExtUrl) {
-        console.log(
-          ` ${chalk.bold("UI External:")} ${chalk.magenta(uiExtUrl)}`
-        );
-      }
-
-      console.log(chalk.gray(" ------------------------------------"));
 
       const out = {
         local: localUrl,
@@ -282,10 +257,10 @@ const publicPipeline = new DebouncedWorker(
 
       writeFileSync(
         join(__dirname, "bs-config.json"),
-        JSON.stringify(out, null, 2)
+        JSON.stringify(out, null, 2),
       );
 
       console.log(`\n${chalk.gray("Press Ctrl+C to stop.")}\n`);
-    }
+    },
   );
 })();
