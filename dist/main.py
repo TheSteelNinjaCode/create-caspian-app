@@ -36,6 +36,7 @@ from casp.layout import (
 import hashlib
 from casp.streaming import SSE
 from typing import Any, Optional, get_args, get_origin, Union
+import re
 
 load_dotenv()
 cfg = get_config()
@@ -263,6 +264,25 @@ class RPCMiddleware:
 # Route Registration
 # ====
 
+_VOID_TAGS_PATTERN = r"(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)"
+_VOID_END_TAG_RE = re.compile(rf"</\s*{_VOID_TAGS_PATTERN}\s*>", re.IGNORECASE)
+_VOID_OPEN_TAG_RE = re.compile(rf"<\s*({_VOID_TAGS_PATTERN})(\b[^>]*)>", re.IGNORECASE)
+
+def normalize_void_tags(html: str) -> str:
+    html = _VOID_END_TAG_RE.sub("", html)
+
+    def _open_repl(m: re.Match) -> str:
+        tag = m.group(1)
+        attrs = m.group(2) or ""
+        full = m.group(0)
+        if full.rstrip().endswith("/>"):
+            return full
+        if attrs and not attrs.startswith(" "):
+            attrs = " " + attrs
+        return f"<{tag}{attrs} />"
+
+    return _VOID_OPEN_TAG_RE.sub(_open_repl, html)
+
 
 def load_route_module(file_path: str):
     unique_id = hashlib.md5(file_path.encode()).hexdigest()[:8]
@@ -456,6 +476,7 @@ def register_single_route(url_pattern: str, file_path: str):
         )
 
         html_output = transform_scripts(html_output)
+        html_output = normalize_void_tags(html_output)
         response = HTMLResponse(content=html_output)
         response.headers['X-PP-Root-Layout'] = root_layout_id
 
