@@ -47,52 +47,8 @@ cfg = get_config()
 
 
 def setup_auth():
-    """
-    Configure authentication behavior.
-    Secrets (AUTH_SECRET, OAUTH credentials) come from .env
-    """
-    configure_auth(AuthSettings(
-        # Token settings
-        default_token_validity="7d",
-        token_auto_refresh=False,
-
-        # Route protection mode
-        # True = all routes private except public_routes and auth_routes
-        # False = only private_routes require auth
-        is_all_routes_private=False,
-
-        # Route lists
-        private_routes=[],  # Used when is_all_routes_private=False
-        public_routes=["/"],
-        auth_routes=["/signin", "/signup"],
-
-        # Role-based access (optional)
-        is_role_based=False,
-        role_identifier="role",
-        role_based_routes={
-            # "/admin": [AuthRole.ADMIN],
-            # "/reports": [AuthRole.ADMIN, AuthRole.USER],
-        },
-
-        # Redirects
-        default_signin_redirect="/dashboard",
-        default_signout_redirect="/signin",
-        api_auth_prefix="/api/auth",
-
-        # Callbacks (optional hooks)
-        # lambda user: print(f"User signed in: {user.get('email')}")
-        on_sign_in=None,
-        on_sign_out=None,  # lambda: print("User signed out")
-        # lambda req: RedirectResponse("/custom-login", 303)
-        on_auth_failure=None,
-    ))
-
-    # Register OAuth providers (secrets from .env)
-    Auth.set_providers(
-        GithubProvider(),  # Uses GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET from .env
-        # Uses GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI from .env
-        GoogleProvider(),
-    )
+    configure_auth(AuthSettings())
+    Auth.set_providers(GithubProvider(), GoogleProvider())
 
 
 setup_auth()
@@ -232,9 +188,6 @@ class AuthMiddleware:
 
         if auth_inst.is_private_route(path):
             if not auth_inst.is_authenticated():
-                if auth_inst.settings.on_auth_failure:
-                    await auth_inst.settings.on_auth_failure(request)(scope, receive, send)
-                    return
                 await RedirectResponse(url=f'/signin?next={path}', status_code=303)(scope, receive, send)
                 return
 
@@ -264,9 +217,12 @@ class RPCMiddleware:
 # Route Registration
 # ====
 
+
 _VOID_TAGS_PATTERN = r"(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)"
 _VOID_END_TAG_RE = re.compile(rf"</\s*{_VOID_TAGS_PATTERN}\s*>", re.IGNORECASE)
-_VOID_OPEN_TAG_RE = re.compile(rf"<\s*({_VOID_TAGS_PATTERN})(\b[^>]*)>", re.IGNORECASE)
+_VOID_OPEN_TAG_RE = re.compile(
+    rf"<\s*({_VOID_TAGS_PATTERN})(\b[^>]*)>", re.IGNORECASE)
+
 
 def normalize_void_tags(html: str) -> str:
     html = _VOID_END_TAG_RE.sub("", html)
