@@ -19,7 +19,6 @@ from casp.cache_handler import CacheHandler
 from casp.caspian_config import get_files_index, get_config
 from casp.auth import (
     Auth,
-    AuthSettings,
     GoogleProvider,
     GithubProvider,
     configure_auth,
@@ -37,6 +36,7 @@ import hashlib
 from casp.streaming import SSE
 from typing import Any, Optional, get_args, get_origin, Union
 import re
+from src.lib.auth.auth_config import build_auth_settings
 
 load_dotenv()
 cfg = get_config()
@@ -47,7 +47,7 @@ cfg = get_config()
 
 
 def setup_auth():
-    configure_auth(AuthSettings())
+    configure_auth(build_auth_settings())
     Auth.set_providers(GithubProvider(), GoogleProvider())
 
 
