@@ -12,6 +12,7 @@ import {
 import { componentMap } from "./component-map.js";
 import { createServer } from "net";
 import chalk from "chalk";
+import { networkInterfaces } from "os";
 
 const { __dirname } = getFileMeta();
 const bs: BrowserSyncInstance = browserSync.create();
@@ -33,6 +34,18 @@ function getAvailablePort(startPort: number): Promise<number> {
       resolve(getAvailablePort(startPort + 1));
     });
   });
+}
+
+function getExternalIP(): string | null {
+  const nets = networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name]!) {
+      if (net.family === "IPv4" && !net.internal) {
+        return net.address;
+      }
+    }
+  }
+  return null;
 }
 
 const pipeline = new DebouncedWorker(
@@ -199,6 +212,7 @@ const publicPipeline = new DebouncedWorker(
     {
       proxy: `http://localhost:${pythonPort}`,
       port: bsPort,
+      online: true,
       middleware: [
         (_req, res, next) => {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -220,8 +234,11 @@ const publicPipeline = new DebouncedWorker(
       }
 
       const urls = bsInstance.getOption("urls");
-      const localUrl = urls.get("local");
-      const externalUrl = urls.get("external");
+      const localUrl = urls.get("local") || `http://localhost:${bsPort}`;
+      const externalIP = getExternalIP();
+      const externalUrl =
+        urls.get("external") ||
+        (externalIP ? `http://${externalIP}:${bsPort}` : null);
       const uiUrl = urls.get("ui");
       const uiExtUrl = urls.get("ui-external");
 
