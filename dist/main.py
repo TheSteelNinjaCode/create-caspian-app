@@ -419,10 +419,10 @@ def register_single_route(url_pattern: str, file_path: str):
         else:
             content = load_template_file(file_path)
 
-        content = transform_components(content, base_dir=route_dir)
+        content = await transform_components(content, base_dir=route_dir)
         full_context = {**kwargs, "request": request, **page_layout_props}
 
-        html_output, root_layout_id = render_with_nested_layouts(
+        html_output, root_layout_id = await render_with_nested_layouts(
             children=content,
             route_dir=route_dir,
             page_metadata=page_metadata,
@@ -472,7 +472,7 @@ async def custom_404_handler(request: Request, exc: StarletteHTTPException):
         if os.path.exists(not_found_path):
             with open(not_found_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-            html_output, root_layout_id = render_with_nested_layouts(
+            html_output, root_layout_id = await render_with_nested_layouts(
                 children=content,
                 route_dir='src/app',
                 page_metadata={
@@ -503,7 +503,7 @@ async def custom_general_exception_handler(request: Request, exc: Exception):
         try:
             rendered_content = string_env.from_string(
                 raw_content).render(**context_data)
-            html_output, root_layout_id = render_with_nested_layouts(
+            html_output, root_layout_id = await render_with_nested_layouts(
                 children=rendered_content,
                 route_dir='src/app',
                 page_metadata={
