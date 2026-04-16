@@ -428,6 +428,8 @@ def register_single_route(url_pattern: str, file_path: str):
             page_metadata=page_metadata,
             page_layout_props=page_layout_props,
             context_data=full_context,
+            page_component_source=file_path,
+            control_mode=True,
             component_compiler=transform_components
         )
 
@@ -481,6 +483,8 @@ async def custom_404_handler(request: Request, exc: StarletteHTTPException):
                 },
                 page_layout_props=None,
                 context_data={'request': request},
+                page_component_source=not_found_path,
+                control_mode=True,
                 transform_fn=transform_scripts
             )
             resp = HTMLResponse(content=html_output, status_code=404)
@@ -512,6 +516,8 @@ async def custom_general_exception_handler(request: Request, exc: Exception):
                 },
                 page_layout_props=None,
                 context_data=context_data,
+                page_component_source=error_page_path,
+                control_mode=True,
                 transform_fn=transform_scripts
             )
             resp = HTMLResponse(content=html_output, status_code=500)
