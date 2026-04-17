@@ -40,6 +40,8 @@ If docs differ from either of those, update the docs to match the code that actu
 - Reuse `src/lib/prisma/prisma`, `PrismaClient`, generated models, and helper types instead of creating a second Python database abstraction.
 - Prisma schema source of truth is `prisma/schema.prisma`, and the local Node workflow still uses `npx prisma generate` plus `prisma/seed.ts`.
 - PulsePoint runtime code is shipped in `public/js/pp-reactive-v2.js` and loaded from `public/js/main.js`.
+- `pp-component` is injected by the Python render pipeline onto page, layout, and component roots; authored route and component templates should not add it manually.
+- Route and component HTML templates must keep exactly one top-level lowercase HTML element so Caspian can inject `pp-component`.
 - In the current router inside `main.py`, path params are passed to `page()` as the first positional `dict` argument.
 - Matching query params can still be injected by name, and `request` is injected by keyword when declared.
 - The installed `casp.layout` runtime calls `layout()` synchronously. Keep async I/O in `page()` or `@rpc()`.
@@ -72,6 +74,8 @@ Use this map before making changes.
 - Keep auth policy in `src/lib/auth/auth_config.py`.
 - Keep auth bootstrap, middleware ordering, provider wiring, and router behavior in `main.py`.
 - Use PulsePoint and `pp.rpc(...)` as the default frontend and browser-to-server contract unless the user explicitly wants another stack.
+- Treat `pp-component` as a framework-owned attribute on authored templates. Document it, but do not manually add it in normal route or component HTML.
+- Keep route and component HTML templates to a single top-level lowercase HTML element so the Python side can inject `pp-component` safely.
 - Keep Copilot guidance consolidated in `.github/copilot-instructions.md`; do not add `.github/instructions/` in this workspace.
 - When writing docs about route behavior, describe the param passing and layout behavior implemented in the current runtime, not generic upstream assumptions.
 - When a runtime change affects documentation, update the matching page in `node_modules/caspian-utils/dist/docs/`.
@@ -83,7 +87,7 @@ The packaged docs in this workspace are already mostly aligned with the installe
 
 - `database.md` describes the scaffold generically, but this workspace now includes a real app-owned Python Prisma-style layer under `src/lib/prisma/`.
 - `state.md` is correct to warn that cross-request persistence depends on `request.state.session`, which is not bridged in the current `main.py`.
-- `routing.md`, `auth.md`, `fetch-data.md`, `cache.md`, `pulsepoint.md`, and `validation.md` should continue to be validated against the installed `casp` package before any behavior claims are changed.
+- `routing.md`, `components.md`, `auth.md`, `fetch-data.md`, `cache.md`, `pulsepoint.md`, and `validation.md` should continue to be validated against the installed `casp` package before any behavior claims are changed.
 
 ## Maintenance Checklist
 

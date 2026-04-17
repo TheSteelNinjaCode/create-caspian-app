@@ -12,9 +12,11 @@
 - Reuse the existing Python database layer in `src/lib/prisma/**`; do not create a second app-owned database abstraction unless the user explicitly asks for one.
 - Keep auth policy in `src/lib/auth/auth_config.py` and keep auth bootstrap, middleware wiring, and provider registration in `main.py`.
 - Use PulsePoint and `pp.rpc(...)` as the default frontend and client-to-server contract unless the user requests another stack.
+- Treat `pp-component` on routes, layouts, and components as compiler-injected by the Python side; do not add it manually in authored templates unless the task is explicitly about runtime internals.
 - `layout()` is synchronous in the installed runtime. Put async I/O in `page()` or `@rpc()`.
 - Dynamic route params currently reach `page()` as a single positional `dict`, with query params injected by name and `request` injected by keyword when declared.
 - Do not assume `StateManager` survives across requests unless `request.state.session` is explicitly bridged from `request.session`.
+- Route, layout, and component HTML templates must keep a single top-level lowercase HTML element so Caspian can inject `pp-component`.
 
 ## Path-Specific Rules
 
@@ -46,6 +48,8 @@
 
 - Keep route templates and layouts server-rendered first, with PulsePoint enhancement as the default interactive layer.
 - Preserve Caspian template syntax such as `[[...]]` in layouts and `pp-*` runtime attributes in rendered HTML.
+- Do not author `pp-component="..."` manually in route or layout templates; the Python render pipeline injects it onto the single root element.
+- Keep authored route and layout templates to one top-level lowercase HTML root element, the same constraint used for component templates.
 - Do not assume React, Vue, JSX, HTMX, or another frontend runtime unless the user explicitly requests one.
 
 ### `prisma/**`
@@ -72,6 +76,8 @@
 	- this workspace already has `src/lib/prisma/**`
 	- auth policy lives in `src/lib/auth/auth_config.py`
 	- PulsePoint runtime lives in `public/js/pp-reactive-v2.js`
+	- `pp-component` is injected by the Python render pipeline; authored route and component templates should not add it manually
+	- route, layout, and component templates must keep a single top-level lowercase HTML root for `pp-component` injection
 	- dynamic route params are passed to `page()` as a single positional `dict`
 	- `layout()` is sync-only in the installed runtime
 	- `StateManager` persistence depends on `request.state.session`, which is not bridged from `request.session` in the current `main.py`
