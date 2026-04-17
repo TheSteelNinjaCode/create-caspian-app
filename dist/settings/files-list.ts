@@ -17,10 +17,18 @@ const getAllFiles = (dirPath: string): string[] => {
 
   const items = readdirSync(dirPath);
   items.forEach((item) => {
+    if (item === "__pycache__") {
+      return;
+    }
+
     const fullPath = join(dirPath, item);
     if (statSync(fullPath).isDirectory()) {
       files.push(...getAllFiles(fullPath));
     } else {
+      if (fullPath.endsWith(".pyc")) {
+        return;
+      }
+
       const relativePath = `.${sep}${relative(
         join(__dirname, ".."),
         fullPath
