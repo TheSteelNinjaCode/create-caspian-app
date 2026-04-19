@@ -28,6 +28,8 @@ If the task is about framework internals, prefer the installed `casp` package.
 
 If docs differ from either of those, update the docs to match the code that actually runs.
 
+Before making feature, tooling, or scaffolding decisions, read `caspian.config.json` almost immediately. Treat it as the workspace feature gate for flags such as `backendOnly`, `tailwindcss`, `mcp`, `prisma`, `typescript`, and `componentScanDirs`.
+
 ## Verified Workspace Facts
 
 - Local Caspian docs live under `node_modules/caspian-utils/dist/docs/`.
@@ -39,9 +41,11 @@ If docs differ from either of those, update the docs to match the code that actu
 - This workspace already has an app-owned Python database layer in `src/lib/prisma/`.
 - Reuse `src/lib/prisma/prisma`, `PrismaClient`, generated models, and helper types instead of creating a second Python database abstraction.
 - Prisma schema source of truth is `prisma/schema.prisma`, and the local Node workflow still uses `npx prisma generate` plus `prisma/seed.ts`.
+- `caspian.config.json` is the first config file to check for enabled workspace features. In the current workspace it sets `backendOnly: false`, `tailwindcss: true`, `mcp: false`, `prisma: true`, `typescript: false`, and `componentScanDirs: ["src"]`.
 - PulsePoint runtime code is shipped in `public/js/pp-reactive-v2.js` and loaded from `public/js/main.js`.
 - `pp-component` is injected by the Python render pipeline onto page, layout, and component roots; authored route and component templates should not add it manually.
-- Route and component HTML templates must keep exactly one top-level lowercase HTML element so Caspian can inject `pp-component`.
+- `main.py` runs `transform_scripts(...)`, so authored body `<script>` tags are rewritten to `<script type="text/pp">` in rendered HTML; route, layout, and component templates should write plain `<script>` in source.
+- Route and component HTML templates must keep exactly one top-level lowercase HTML element so Caspian can inject `pp-component`. Think React-style single parent wrapper: good `<div>...</div>` with any owned script inside that same root, bad sibling top-level tags such as `<div>...</div><script ...></script>`.
 - In the current router inside `main.py`, path params are passed to `page()` as the first positional `dict` argument.
 - Matching query params can still be injected by name, and `request` is injected by keyword when declared.
 - The installed `casp.layout` runtime calls `layout()` synchronously. Keep async I/O in `page()` or `@rpc()`.
@@ -57,6 +61,7 @@ Use this map before making changes.
 | Task area | Read first | Verify against |
 | --- | --- | --- |
 | Project layout and file placement | `node_modules/caspian-utils/dist/docs/index.md`, `node_modules/caspian-utils/dist/docs/project-structure.md` | current workspace tree |
+| Feature availability and tooling switches | `caspian.config.json` | current workspace tree, `main.py`, `prisma/**`, `public/js/**` |
 | Routing, layouts, metadata | `node_modules/caspian-utils/dist/docs/routing.md` | `main.py`, `.venv/Lib/site-packages/casp/layout.py` |
 | Auth, sessions, RBAC, providers | `node_modules/caspian-utils/dist/docs/auth.md` | `src/lib/auth/auth_config.py`, `main.py`, `.venv/Lib/site-packages/casp/auth.py` |
 | RPC, data loading, streaming, uploads | `node_modules/caspian-utils/dist/docs/fetch-data.md`, `node_modules/caspian-utils/dist/docs/pulsepoint.md` | `.venv/Lib/site-packages/casp/rpc.py`, `public/js/pp-reactive-v2.js`, `main.py` |
@@ -69,13 +74,15 @@ Use this map before making changes.
 
 - Keep app-owned shared code in `src/lib/**`.
 - Keep route-specific logic in `src/app/**`.
+- Read `caspian.config.json` before deciding whether a Caspian feature should be used, documented, scaffolded, or avoided in the current workspace.
 - Treat `.venv/Lib/site-packages/casp/**` as framework internals unless the task is explicitly about Caspian core behavior or installed-runtime documentation.
 - When a task involves Python-side database access, extend or reuse `src/lib/prisma/**` instead of introducing a parallel helper.
 - Keep auth policy in `src/lib/auth/auth_config.py`.
 - Keep auth bootstrap, middleware ordering, provider wiring, and router behavior in `main.py`.
 - Use PulsePoint and `pp.rpc(...)` as the default frontend and browser-to-server contract unless the user explicitly wants another stack.
 - Treat `pp-component` as a framework-owned attribute on authored templates. Document it, but do not manually add it in normal route or component HTML.
-- Keep route and component HTML templates to a single top-level lowercase HTML element so the Python side can inject `pp-component` safely.
+- Treat `type="text/pp"` on PulsePoint scripts as a render-time attribute too. In authored route, layout, and component HTML, write plain `<script>` and let Caspian rewrite it.
+- Keep route and component HTML templates to a single top-level lowercase HTML element so the Python side can inject `pp-component` safely. Keep any owned PulsePoint script inside that same root instead of as a sibling top-level node.
 - Keep Copilot guidance consolidated in `.github/copilot-instructions.md`; do not add `.github/instructions/` in this workspace.
 - When writing docs about route behavior, describe the param passing and layout behavior implemented in the current runtime, not generic upstream assumptions.
 - When a runtime change affects documentation, update the matching page in `node_modules/caspian-utils/dist/docs/`.
