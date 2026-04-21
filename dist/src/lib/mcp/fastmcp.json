@@ -1,0 +1,15 @@
+{
+  "$schema": "https://gofastmcp.com/public/schemas/fastmcp.json/v1.json",
+  "source": {
+    "type": "filesystem",
+    "path": "src/lib/mcp/mcp_server.py",
+    "entrypoint": "mcp"
+  },
+  "deployment": {
+    "transport": "streamable-http",
+    "host": "127.0.0.1",
+    "port": 5101,
+    "path": "/mcp",
+    "log_level": "INFO"
+  }
+}

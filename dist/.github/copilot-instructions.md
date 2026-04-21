@@ -13,6 +13,7 @@
 - When `prisma/schema.prisma` changes, follow this order: run `npx prisma migrate dev`; if the change affects seed flow or `prisma/seed.ts`, run `npx prisma generate` and then `npx prisma db seed`; then run `npx ppy generate` so the Python ORM stays aligned with the schema.
 - Reuse the existing Python database layer in `src/lib/prisma/**`; do not create a second app-owned database abstraction unless the user explicitly asks for one.
 - Treat `src/lib/prisma/__init__.py`, `src/lib/prisma/db.py`, `src/lib/prisma/models.py`, and `settings/prisma-schema.json` as generated outputs owned by `npx ppy generate`; do not create or hand-edit them manually.
+- When `caspian.config.json` has `mcp: true`, treat `src/lib/mcp/mcp_server.py` as the app-owned FastMCP server and `src/lib/mcp/fastmcp.json` as the default MCP config. Use `npm run mcp` or `fastmcp run src/lib/mcp/fastmcp.json`; do not assume root `fastmcp.json` auto-discovery.
 - Keep auth policy in `src/lib/auth/auth_config.py` and keep auth bootstrap, middleware wiring, and provider registration in `main.py`.
 - Use PulsePoint and `pp.rpc(...)` as the default frontend and client-to-server contract unless the user requests another stack.
 - Treat `pp-component` on routes, layouts, and components, and `type="text/pp"` on owned PulsePoint scripts, as compiler-injected by the Python side; do not add them manually in authored templates unless the task is explicitly about runtime internals.
@@ -34,6 +35,7 @@
 
 - Keep `src/lib/` for app-owned shared code, service wrappers, and reusable helpers.
 - Reuse the generated `src/lib/prisma/` package for Python database access, but do not hand-edit files under `src/lib/prisma/`; regenerate them with `npx ppy generate` after schema changes.
+- Keep app-owned MCP tools in `src/lib/mcp/mcp_server.py` and keep the default FastMCP config in `src/lib/mcp/fastmcp.json`. If those locations change, update `settings/restart-mcp.ts` and the MCP docs together.
 - Keep auth policy in `src/lib/auth/auth_config.py`. Keep auth bootstrap and middleware order changes in `main.py`.
 
 ### `public/js/main.js`
@@ -77,17 +79,20 @@
 
 - These files are the local documentation layer, not the runtime. Verify every behavior claim against the actual code that runs.
 - Use this verification order:
-	1. `caspian.config.json`, then `main.py`, `src/lib/**`, `public/js/**`, `prisma/**`, `src/app/**`
-	2. `.venv/Lib/site-packages/casp/**`
-	3. the markdown file being edited
+  1.  `caspian.config.json`, then `main.py`, `src/lib/**`, `public/js/**`, `prisma/**`, `src/app/**`
+  2.  `.venv/Lib/site-packages/casp/**`
+  3.  the markdown file being edited
 - Keep repo-specific facts accurate when they matter:
-	- `caspian.config.json` is the first config file to read for enabled workspace features and scan directories
-	- this workspace already has `src/lib/prisma/**`
-	- auth policy lives in `src/lib/auth/auth_config.py`
-	- PulsePoint runtime lives in `public/js/pp-reactive-v2.js`
-	- `pp-component` is injected by the Python render pipeline, and `main.py` rewrites authored body scripts to `type="text/pp"`; authored route, layout, and component templates should not add those attributes manually
-	- route, layout, and component templates must keep a single top-level lowercase HTML root for `pp-component` injection, with any owned plain `<script>` kept inside that same root
-	- dynamic route params are passed to `page()` as a single positional `dict`
-	- `layout()` is sync-only in the installed runtime
-	- `StateManager` persistence depends on `request.state.session`, which is not bridged from `request.session` in the current `main.py`
+  - `caspian.config.json` is the first config file to read for enabled workspace features and scan directories
+  - this workspace already has `src/lib/prisma/**`
+  - this workspace's app-owned FastMCP server lives in `src/lib/mcp/mcp_server.py`
+  - the default FastMCP config lives in `src/lib/mcp/fastmcp.json`
+  - `package.json` starts MCP through `npm run mcp`, which runs `settings/restart-mcp.ts`; manual FastMCP runs should pass the explicit nested config path because root auto-discovery does not find it
+  - auth policy lives in `src/lib/auth/auth_config.py`
+  - PulsePoint runtime lives in `public/js/pp-reactive-v2.js`
+  - `pp-component` is injected by the Python render pipeline, and `main.py` rewrites authored body scripts to `type="text/pp"`; authored route, layout, and component templates should not add those attributes manually
+  - route, layout, and component templates must keep a single top-level lowercase HTML root for `pp-component` injection, with any owned plain `<script>` kept inside that same root
+  - dynamic route params are passed to `page()` as a single positional `dict`
+  - `layout()` is sync-only in the installed runtime
+  - `StateManager` persistence depends on `request.state.session`, which is not bridged from `request.session` in the current `main.py`
 - Keep `index.md` and cross-links aligned when adding or changing pages.

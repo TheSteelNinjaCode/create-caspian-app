@@ -40,7 +40,7 @@ export function createSrcWatcher(
     logPrefix?: string;
     usePolling?: boolean;
     interval?: number;
-  }
+  },
 ): FSWatcher {
   const {
     exts,
@@ -87,7 +87,7 @@ export class DebouncedWorker {
   constructor(
     private work: () => Promise<void> | void,
     private debounceMs = 350,
-    private name = "worker"
+    private name = "worker",
   ) {}
 
   schedule(reason?: string) {
@@ -124,6 +124,7 @@ export function createRestartableProcess(spec: {
   cmd: string;
   args?: string[];
   stdio?: "inherit" | [any, any, any];
+  startMessage?: string;
   gracefulSignal?: NodeJS.Signals;
   forceKillAfterMs?: number;
   windowsKillTree?: boolean;
@@ -135,6 +136,7 @@ export function createRestartableProcess(spec: {
     cmd,
     args = [],
     stdio = ["ignore", "pipe", "pipe"],
+    startMessage,
     gracefulSignal = "SIGINT",
     forceKillAfterMs = 2000,
     windowsKillTree = true,
@@ -145,7 +147,9 @@ export function createRestartableProcess(spec: {
   let child: ChildProcess | null = null;
 
   function start() {
-    console.log(`[${name}] Starting: ${cmd} ${args.join(" ")}`.trim());
+    console.log(
+      startMessage ?? `[${name}] Starting: ${cmd} ${args.join(" ")}`.trim(),
+    );
     child = spawn(cmd, args, { stdio, windowsHide: true });
 
     child.stdout?.on("data", (buf: Buffer) => {
@@ -172,7 +176,7 @@ export function createRestartableProcess(spec: {
   function killOnWindows(pid: number): Promise<void> {
     return new Promise((resolve) => {
       const cp = execFile("taskkill", ["/F", "/T", "/PID", String(pid)], () =>
-        resolve()
+        resolve(),
       );
       cp.on("error", () => resolve());
     });

@@ -39,11 +39,13 @@ Before making feature, tooling, or scaffolding decisions, read `caspian.config.j
 - App-level auth policy lives in `src/lib/auth/auth_config.py`.
 - `main.py` applies auth settings with `configure_auth(build_auth_settings())` and registers `GithubProvider()` plus `GoogleProvider()`.
 - This workspace already has an app-owned Python database layer in `src/lib/prisma/`.
+- This workspace now has an app-owned FastMCP server at `src/lib/mcp/mcp_server.py`, with `src/lib/mcp/fastmcp.json` as the default MCP server spec.
+- `package.json` starts MCP through `npm run mcp`, which runs `settings/restart-mcp.ts` and prefers `src/lib/mcp/fastmcp.json` before legacy root configs. Direct FastMCP runs should pass the explicit nested config path.
 - Reuse `src/lib/prisma/prisma`, `PrismaClient`, generated models, and helper types instead of creating a second Python database abstraction.
 - Prisma schema source of truth is `prisma/schema.prisma`.
 - The schema-change workflow in this workspace is: `npx prisma migrate dev`; if seed flow or `prisma/seed.ts` is involved, run `npx prisma generate` and then `npx prisma db seed`; then run `npx ppy generate`.
 - `npx ppy generate` owns `src/lib/prisma/__init__.py`, `src/lib/prisma/db.py`, `src/lib/prisma/models.py`, and `settings/prisma-schema.json`; do not hand-edit those generated files.
-- `caspian.config.json` is the first config file to check for enabled workspace features. In the current workspace it sets `backendOnly: false`, `tailwindcss: true`, `mcp: false`, `prisma: true`, `typescript: false`, and `componentScanDirs: ["src"]`.
+- `caspian.config.json` is the first config file to check for enabled workspace features. In the current workspace it sets `backendOnly: false`, `tailwindcss: true`, `mcp: true`, `prisma: true`, `typescript: false`, and `componentScanDirs: ["src"]`.
 - PulsePoint runtime code is shipped in `public/js/pp-reactive-v2.js` and loaded from `public/js/main.js`.
 - `pp-component` is injected by the Python render pipeline onto page, layout, and component roots; authored route and component templates should not add it manually.
 - `main.py` runs `transform_scripts(...)`, so authored body `<script>` tags are rewritten to `<script type="text/pp">` in rendered HTML; route, layout, and component templates should write plain `<script>` in source.
@@ -60,17 +62,18 @@ Before making feature, tooling, or scaffolding decisions, read `caspian.config.j
 
 Use this map before making changes.
 
-| Task area | Read first | Verify against |
-| --- | --- | --- |
-| Project layout and file placement | `node_modules/caspian-utils/dist/docs/index.md`, `node_modules/caspian-utils/dist/docs/project-structure.md` | current workspace tree |
-| Feature availability and tooling switches | `caspian.config.json` | current workspace tree, `main.py`, `prisma/**`, `public/js/**` |
-| Routing, layouts, metadata | `node_modules/caspian-utils/dist/docs/routing.md` | `main.py`, `.venv/Lib/site-packages/casp/layout.py` |
-| Auth, sessions, RBAC, providers | `node_modules/caspian-utils/dist/docs/auth.md` | `src/lib/auth/auth_config.py`, `main.py`, `.venv/Lib/site-packages/casp/auth.py` |
-| RPC, data loading, streaming, uploads | `node_modules/caspian-utils/dist/docs/fetch-data.md`, `node_modules/caspian-utils/dist/docs/pulsepoint.md` | `.venv/Lib/site-packages/casp/rpc.py`, `public/js/pp-reactive-v2.js`, `main.py` |
-| Server state | `node_modules/caspian-utils/dist/docs/state.md` | `.venv/Lib/site-packages/casp/state_manager.py`, `main.py` |
-| Page caching | `node_modules/caspian-utils/dist/docs/cache.md` | `.venv/Lib/site-packages/casp/cache_handler.py`, `main.py` |
-| Validation | `node_modules/caspian-utils/dist/docs/validation.md` | `.venv/Lib/site-packages/casp/validate.py` |
-| Database and seed flow | `node_modules/caspian-utils/dist/docs/database.md` | `prisma/schema.prisma`, `prisma/seed.ts`, `src/lib/prisma/**` |
+| Task area                                 | Read first                                                                                                   | Verify against                                                                   |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| Project layout and file placement         | `node_modules/caspian-utils/dist/docs/index.md`, `node_modules/caspian-utils/dist/docs/project-structure.md` | current workspace tree                                                           |
+| Feature availability and tooling switches | `caspian.config.json`                                                                                        | current workspace tree, `main.py`, `prisma/**`, `public/js/**`                   |
+| MCP server layout and launch flow         | `node_modules/caspian-utils/dist/docs/mcp.md`                                                                | `settings/restart-mcp.ts`, `package.json`, `src/lib/mcp/**`                      |
+| Routing, layouts, metadata                | `node_modules/caspian-utils/dist/docs/routing.md`                                                            | `main.py`, `.venv/Lib/site-packages/casp/layout.py`                              |
+| Auth, sessions, RBAC, providers           | `node_modules/caspian-utils/dist/docs/auth.md`                                                               | `src/lib/auth/auth_config.py`, `main.py`, `.venv/Lib/site-packages/casp/auth.py` |
+| RPC, data loading, streaming, uploads     | `node_modules/caspian-utils/dist/docs/fetch-data.md`, `node_modules/caspian-utils/dist/docs/pulsepoint.md`   | `.venv/Lib/site-packages/casp/rpc.py`, `public/js/pp-reactive-v2.js`, `main.py`  |
+| Server state                              | `node_modules/caspian-utils/dist/docs/state.md`                                                              | `.venv/Lib/site-packages/casp/state_manager.py`, `main.py`                       |
+| Page caching                              | `node_modules/caspian-utils/dist/docs/cache.md`                                                              | `.venv/Lib/site-packages/casp/cache_handler.py`, `main.py`                       |
+| Validation                                | `node_modules/caspian-utils/dist/docs/validation.md`                                                         | `.venv/Lib/site-packages/casp/validate.py`                                       |
+| Database and seed flow                    | `node_modules/caspian-utils/dist/docs/database.md`                                                           | `prisma/schema.prisma`, `prisma/seed.ts`, `src/lib/prisma/**`                    |
 
 ## Editing Rules
 
@@ -82,6 +85,7 @@ Use this map before making changes.
 - When `prisma/schema.prisma` changes, run `npx prisma migrate dev` first. If seed flow or `prisma/seed.ts` is involved, run `npx prisma generate` and then `npx prisma db seed`. After that, run `npx ppy generate` so the Python ORM layer and `settings/prisma-schema.json` stay aligned.
 - Keep auth policy in `src/lib/auth/auth_config.py`.
 - Keep auth bootstrap, middleware ordering, provider wiring, and router behavior in `main.py`.
+- When MCP is enabled, keep the app-owned FastMCP server in `src/lib/mcp/mcp_server.py` and the default config in `src/lib/mcp/fastmcp.json`. If those paths move, update `settings/restart-mcp.ts` and the MCP docs together.
 - Use PulsePoint and `pp.rpc(...)` as the default frontend and browser-to-server contract unless the user explicitly wants another stack.
 - Treat `pp-component` as a framework-owned attribute on authored templates. Document it, but do not manually add it in normal route or component HTML.
 - Treat `type="text/pp"` on PulsePoint scripts as a render-time attribute too. In authored route, layout, and component HTML, write plain `<script>` and let Caspian rewrite it.
@@ -96,6 +100,7 @@ Use this map before making changes.
 The packaged docs in this workspace are already mostly aligned with the installed runtime, but keep these repo-specific clarifications in mind:
 
 - `database.md` is the source doc for the Prisma and Python ORM workflow in this repo: schema changes go through `npx prisma migrate dev`, optional `npx prisma generate` plus `npx prisma db seed`, then `npx ppy generate`, and generated ORM files under `src/lib/prisma/` plus `settings/prisma-schema.json` are not hand-edited.
+- `mcp.md` is the source doc for the nested FastMCP config path, the app-owned MCP server location, direct FastMCP command usage, and the workspace runner discovery order.
 - `state.md` is correct to warn that cross-request persistence depends on `request.state.session`, which is not bridged in the current `main.py`.
 - `routing.md`, `components.md`, `auth.md`, `fetch-data.md`, `cache.md`, `pulsepoint.md`, and `validation.md` should continue to be validated against the installed `casp` package before any behavior claims are changed.
 
