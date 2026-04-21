@@ -40,7 +40,9 @@ Before making feature, tooling, or scaffolding decisions, read `caspian.config.j
 - `main.py` applies auth settings with `configure_auth(build_auth_settings())` and registers `GithubProvider()` plus `GoogleProvider()`.
 - This workspace already has an app-owned Python database layer in `src/lib/prisma/`.
 - Reuse `src/lib/prisma/prisma`, `PrismaClient`, generated models, and helper types instead of creating a second Python database abstraction.
-- Prisma schema source of truth is `prisma/schema.prisma`, and the local Node workflow still uses `npx prisma generate` plus `prisma/seed.ts`.
+- Prisma schema source of truth is `prisma/schema.prisma`.
+- The schema-change workflow in this workspace is: `npx prisma migrate dev`; if seed flow or `prisma/seed.ts` is involved, run `npx prisma generate` and then `npx prisma db seed`; then run `npx ppy generate`.
+- `npx ppy generate` owns `src/lib/prisma/__init__.py`, `src/lib/prisma/db.py`, `src/lib/prisma/models.py`, and `settings/prisma-schema.json`; do not hand-edit those generated files.
 - `caspian.config.json` is the first config file to check for enabled workspace features. In the current workspace it sets `backendOnly: false`, `tailwindcss: true`, `mcp: false`, `prisma: true`, `typescript: false`, and `componentScanDirs: ["src"]`.
 - PulsePoint runtime code is shipped in `public/js/pp-reactive-v2.js` and loaded from `public/js/main.js`.
 - `pp-component` is injected by the Python render pipeline onto page, layout, and component roots; authored route and component templates should not add it manually.
@@ -76,7 +78,8 @@ Use this map before making changes.
 - Keep route-specific logic in `src/app/**`.
 - Read `caspian.config.json` before deciding whether a Caspian feature should be used, documented, scaffolded, or avoided in the current workspace.
 - Treat `.venv/Lib/site-packages/casp/**` as framework internals unless the task is explicitly about Caspian core behavior or installed-runtime documentation.
-- When a task involves Python-side database access, extend or reuse `src/lib/prisma/**` instead of introducing a parallel helper.
+- When a task involves Python-side database access, reuse `src/lib/prisma/**` instead of introducing a parallel helper, but do not hand-edit generated files in that directory.
+- When `prisma/schema.prisma` changes, run `npx prisma migrate dev` first. If seed flow or `prisma/seed.ts` is involved, run `npx prisma generate` and then `npx prisma db seed`. After that, run `npx ppy generate` so the Python ORM layer and `settings/prisma-schema.json` stay aligned.
 - Keep auth policy in `src/lib/auth/auth_config.py`.
 - Keep auth bootstrap, middleware ordering, provider wiring, and router behavior in `main.py`.
 - Use PulsePoint and `pp.rpc(...)` as the default frontend and browser-to-server contract unless the user explicitly wants another stack.
@@ -92,7 +95,7 @@ Use this map before making changes.
 
 The packaged docs in this workspace are already mostly aligned with the installed runtime, but keep these repo-specific clarifications in mind:
 
-- `database.md` describes the scaffold generically, but this workspace now includes a real app-owned Python Prisma-style layer under `src/lib/prisma/`.
+- `database.md` is the source doc for the Prisma and Python ORM workflow in this repo: schema changes go through `npx prisma migrate dev`, optional `npx prisma generate` plus `npx prisma db seed`, then `npx ppy generate`, and generated ORM files under `src/lib/prisma/` plus `settings/prisma-schema.json` are not hand-edited.
 - `state.md` is correct to warn that cross-request persistence depends on `request.state.session`, which is not bridged in the current `main.py`.
 - `routing.md`, `components.md`, `auth.md`, `fetch-data.md`, `cache.md`, `pulsepoint.md`, and `validation.md` should continue to be validated against the installed `casp` package before any behavior claims are changed.
 

@@ -10,7 +10,9 @@
 - For current repo behavior, trust `main.py`, `src/lib/**`, `public/js/**`, `prisma/**`, and `src/app/**` over generic Caspian docs.
 - For framework internals, trust `.venv/Lib/site-packages/casp/**` over generic or older upstream guidance.
 - When docs and runtime disagree, align the docs to the code that actually runs in this workspace.
+- When `prisma/schema.prisma` changes, follow this order: run `npx prisma migrate dev`; if the change affects seed flow or `prisma/seed.ts`, run `npx prisma generate` and then `npx prisma db seed`; then run `npx ppy generate` so the Python ORM stays aligned with the schema.
 - Reuse the existing Python database layer in `src/lib/prisma/**`; do not create a second app-owned database abstraction unless the user explicitly asks for one.
+- Treat `src/lib/prisma/__init__.py`, `src/lib/prisma/db.py`, `src/lib/prisma/models.py`, and `settings/prisma-schema.json` as generated outputs owned by `npx ppy generate`; do not create or hand-edit them manually.
 - Keep auth policy in `src/lib/auth/auth_config.py` and keep auth bootstrap, middleware wiring, and provider registration in `main.py`.
 - Use PulsePoint and `pp.rpc(...)` as the default frontend and client-to-server contract unless the user requests another stack.
 - Treat `pp-component` on routes, layouts, and components, and `type="text/pp"` on owned PulsePoint scripts, as compiler-injected by the Python side; do not add them manually in authored templates unless the task is explicitly about runtime internals.
@@ -31,7 +33,7 @@
 ### `src/lib/**/*.py`
 
 - Keep `src/lib/` for app-owned shared code, service wrappers, and reusable helpers.
-- Reuse and extend the existing `src/lib/prisma/` package for Python database access.
+- Reuse the generated `src/lib/prisma/` package for Python database access, but do not hand-edit files under `src/lib/prisma/`; regenerate them with `npx ppy generate` after schema changes.
 - Keep auth policy in `src/lib/auth/auth_config.py`. Keep auth bootstrap and middleware order changes in `main.py`.
 
 ### `public/js/main.js`
@@ -59,8 +61,11 @@
 
 - Treat `prisma/schema.prisma` as the data-model source of truth.
 - Treat `prisma.config.ts` as the datasource and migration or seed configuration source of truth.
+- After changing `prisma/schema.prisma`, run `npx prisma migrate dev` first so migrations and the development database stay aligned.
+- If the schema change affects seed data or `prisma/seed.ts`, run `npx prisma generate` and then `npx prisma db seed`.
+- Run `npx ppy generate` after every schema change so the Python ORM files and `settings/prisma-schema.json` stay aligned with Prisma.
 - Keep Node-side generation and seeding aligned with `npx prisma generate` and `prisma/seed.ts`.
-- Keep Python-side database access aligned with `src/lib/prisma/**`.
+- Keep Python-side database access aligned with `src/lib/prisma/**`, and treat that directory as generated output rather than a manual editing surface.
 
 ### `.venv/Lib/site-packages/casp/**/*.py`
 
