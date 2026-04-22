@@ -13,6 +13,7 @@ import { componentMap } from "./component-map.js";
 import { createServer } from "net";
 import chalk from "chalk";
 import { networkInterfaces } from "os";
+import caspianConfig from "../caspian.config.json";
 
 const { __dirname } = getFileMeta();
 const bs: BrowserSyncInstance = browserSync.create();
@@ -24,14 +25,48 @@ let lastChangedFile: string | null = null;
 let pythonPort = 0;
 let bsPort = 0;
 
-function getAvailablePort(startPort: number): Promise<number> {
+function getReservedPorts(): Set<number> {
+  const reservedPorts = new Set<number>();
+
+  if (!caspianConfig.mcp) {
+    return reservedPorts;
+  }
+
+  const mcpSpecPath = join(__dirname, "..", "src", "lib", "mcp", "fastmcp.json");
+  if (!existsSync(mcpSpecPath)) {
+    return reservedPorts;
+  }
+
+  try {
+    const mcpSpec = JSON.parse(readFileSync(mcpSpecPath, "utf-8"));
+    const reservedPort = Number(mcpSpec?.deployment?.port);
+
+    if (Number.isInteger(reservedPort) && reservedPort > 0) {
+      reservedPorts.add(reservedPort);
+    }
+  } catch {
+    // Ignore malformed local MCP config and fall back to dynamic allocation.
+  }
+
+  return reservedPorts;
+}
+
+function getAvailablePort(
+  startPort: number,
+  reservedPorts: Set<number> = new Set(),
+): Promise<number> {
   return new Promise((resolve) => {
+    if (reservedPorts.has(startPort)) {
+      resolve(getAvailablePort(startPort + 1, reservedPorts));
+      return;
+    }
+
     const server = createServer();
     server.listen(startPort, () => {
       server.close(() => resolve(startPort));
     });
     server.on("error", () => {
-      resolve(getAvailablePort(startPort + 1));
+      resolve(getAvailablePort(startPort + 1, reservedPorts));
     });
   });
 }
@@ -134,8 +169,10 @@ const publicPipeline = new DebouncedWorker(
 );
 
 (async () => {
-  bsPort = await getAvailablePort(5090);
-  pythonPort = await getAvailablePort(bsPort + 10);
+  const reservedPorts = getReservedPorts();
+
+  bsPort = await getAvailablePort(5090, reservedPorts);
+  pythonPort = await getAvailablePort(5200, reservedPorts);
 
   updateRouteFilesCache();
 

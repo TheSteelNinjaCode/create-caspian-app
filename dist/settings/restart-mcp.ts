@@ -1,5 +1,6 @@
-import { existsSync } from "fs";
-import { join } from "path";
+import { existsSync, readFileSync } from "fs";
+import { isAbsolute, join } from "path";
+import { createServer } from "net";
 import caspianConfig from "../caspian.config.json";
 import { createRestartableProcess, onExit } from "./utils.js";
 
@@ -36,11 +37,79 @@ function getServerSpec(): string | null {
   return null;
 }
 
-function buildArgs(serverSpec: string): string[] {
+function getServerSpecPath(serverSpec: string): string | null {
+  if (serverSpec.startsWith("http://") || serverSpec.startsWith("https://")) {
+    return null;
+  }
+
+  return isAbsolute(serverSpec) ? serverSpec : join(projectRoot, serverSpec);
+}
+
+function readDeploymentConfig(serverSpec: string): Record<string, unknown> {
+  const serverSpecPath = getServerSpecPath(serverSpec);
+  if (!serverSpecPath || !existsSync(serverSpecPath)) {
+    return {};
+  }
+
+  try {
+    const rawConfig = JSON.parse(readFileSync(serverSpecPath, "utf-8"));
+    if (rawConfig && typeof rawConfig === "object") {
+      const deployment = rawConfig.deployment;
+      if (deployment && typeof deployment === "object") {
+        return deployment as Record<string, unknown>;
+      }
+    }
+  } catch {
+    // Ignore malformed specs and allow FastMCP to validate them.
+  }
+
+  return {};
+}
+
+function getPreferredHost(serverSpec: string): string {
+  return (
+    process.env.MCP_HOST?.trim() ||
+    String(readDeploymentConfig(serverSpec).host || "").trim() ||
+    "127.0.0.1"
+  );
+}
+
+function getPreferredPort(serverSpec: string): number | null {
+  const rawPort =
+    process.env.MCP_PORT?.trim() ||
+    String(readDeploymentConfig(serverSpec).port || "").trim();
+
+  if (!rawPort) {
+    return null;
+  }
+
+  const port = Number(rawPort);
+  if (!Number.isInteger(port) || port <= 0) {
+    return null;
+  }
+
+  return port;
+}
+
+function findAvailablePort(startPort: number, host: string): Promise<number> {
+  return new Promise((resolve) => {
+    const server = createServer();
+
+    server.listen(startPort, host, () => {
+      server.close(() => resolve(startPort));
+    });
+
+    server.on("error", () => {
+      resolve(findAvailablePort(startPort + 1, host));
+    });
+  });
+}
+
+function buildArgs(serverSpec: string, portOverride?: string): string[] {
   const args = ["run", serverSpec, "--no-banner"];
   const transport = process.env.MCP_TRANSPORT?.trim();
   const host = process.env.MCP_HOST?.trim();
-  const port = process.env.MCP_PORT?.trim();
+  const port = portOverride || process.env.MCP_PORT?.trim();
   const path = process.env.MCP_PATH?.trim();
   const logLevel = process.env.MCP_LOG_LEVEL?.trim();
 
@@ -133,12 +202,24 @@ if (!serverSpec) {
   process.exit(0);
 }
 
+const preferredHost = getPreferredHost(serverSpec);
+const preferredPort = getPreferredPort(serverSpec);
+const resolvedPort = preferredPort
+  ? await findAvailablePort(preferredPort, preferredHost)
+  : null;
+
+if (preferredPort && resolvedPort && preferredPort !== resolvedPort) {
+  console.log(
+    `[mcp] Port ${preferredPort} is unavailable on ${preferredHost}, using ${resolvedPort} instead.`,
+  );
+}
+
 const handleMcpOutput = createMcpOutputHandler();
 
 const runner = createRestartableProcess({
   name: "mcp",
   cmd: fastMcpCommand,
-  args: buildArgs(serverSpec),
+  args: buildArgs(serverSpec, resolvedPort ? String(resolvedPort) : undefined),
   startMessage: "[mcp] Starting MCP server...",
   onStdout: createLineHandler(handleMcpOutput),
   onStderr: createLineHandler(handleMcpOutput),
