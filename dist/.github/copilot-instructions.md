@@ -7,12 +7,19 @@
 
 - Use this source-of-truth order: app runtime and app-owned code first, installed `casp` runtime second, packaged markdown docs third.
 - Read `./caspian.config.json` almost immediately before making feature, tooling, scaffolding, or file-placement decisions. Treat it as the workspace feature gate for flags such as `backendOnly`, `tailwindcss`, `mcp`, `prisma`, `typescript`, and `componentScanDirs`.
+- Treat `caspian.config.json` as the single source of truth for whether optional Caspian features are enabled in the current workspace. Use feature-specific docs, files, and commands only after the matching flag is confirmed as enabled.
+- If a feature is disabled and the user wants it, ask whether they want to enable it first, then update `caspian.config.json` and follow `npx casp update project` so framework-managed files align with the new feature set.
 - For current repo behavior, trust `main.py`, `src/lib/**`, `public/js/**`, `prisma/**`, and `src/app/**` over generic Caspian docs.
 - For framework internals, trust `.venv/Lib/site-packages/casp/**` over generic or older upstream guidance.
 - When docs and runtime disagree, align the docs to the code that actually runs in this workspace.
 - When `prisma/schema.prisma` changes, follow this order: run `npx prisma migrate dev`; if the change affects seed flow or `prisma/seed.ts`, run `npx prisma generate` and then `npx prisma db seed`; then run `npx ppy generate` so the Python ORM stays aligned with the schema.
 - Reuse the existing Python database layer in `src/lib/prisma/**`; do not create a second app-owned database abstraction unless the user explicitly asks for one.
 - Treat `src/lib/prisma/__init__.py`, `src/lib/prisma/db.py`, `src/lib/prisma/models.py`, and `settings/prisma-schema.json` as generated outputs owned by `npx ppy generate`; do not create or hand-edit them manually.
+- Treat `package.json` scripts as opt-in operations. Do not run `npm run dev`, `npm run build`, or other npm scripts unless the user explicitly asks, the task genuinely requires that exact script, or deployment preparation needs `npm run build`.
+- Use `npm run build` for deployment prep or an explicit build request, not as the default validation step for routine route, feature, or documentation edits.
+- Let the running dev stack own generated outputs such as `public/css/styles.css`, `settings/component-map.json`, `settings/files-list.json`, `__pycache__/`, and `.pyc` files. Treat those as generated artifacts rather than authored source.
+- Never treat `__pycache__/` directories or `.pyc` files as files to edit, regenerate on purpose, or keep in the final diff.
+- Treat `settings/component-map.json` and `settings/files-list.json` as generated outputs owned by `settings/component-map.ts` and `settings/files-list.ts`; inspect them when needed, but do not hand-edit them.
 - When `caspian.config.json` has `mcp: true`, treat `src/lib/mcp/mcp_server.py` as the app-owned FastMCP server and `src/lib/mcp/fastmcp.json` as the default MCP config. Use `npm run mcp` or `fastmcp run src/lib/mcp/fastmcp.json`; do not assume root `fastmcp.json` auto-discovery.
 - Keep auth policy in `src/lib/auth/auth_config.py` and keep auth bootstrap, middleware wiring, and provider registration in `main.py`.
 - In app-owned starter config like this workspace, routes start public because `src/lib/auth/auth_config.py` sets `is_all_routes_private=False` by default.
@@ -41,7 +48,7 @@
 
 - Keep `src/lib/` for app-owned shared code, service wrappers, and reusable helpers.
 - Reuse the generated `src/lib/prisma/` package for Python database access, but do not hand-edit files under `src/lib/prisma/`; regenerate them with `npx ppy generate` after schema changes.
-- Keep app-owned MCP tools in `src/lib/mcp/mcp_server.py` and keep the default FastMCP config in `src/lib/mcp/fastmcp.json`. If those locations change, update `settings/restart-mcp.ts` and the MCP docs together.
+- When `caspian.config.json` has `mcp: true`, keep app-owned MCP tools in `src/lib/mcp/mcp_server.py` and keep the default FastMCP config in `src/lib/mcp/fastmcp.json`. If those locations change, update `settings/restart-mcp.ts` and the MCP docs together.
 - Keep auth policy in `src/lib/auth/auth_config.py`. Keep auth bootstrap and middleware order changes in `main.py`.
 
 ### `public/js/main.js`
@@ -90,10 +97,14 @@
   3.  the markdown file being edited
 - Keep repo-specific facts accurate when they matter:
   - `caspian.config.json` is the first config file to read for enabled workspace features and scan directories
+  - `caspian.config.json` is the single source of truth for whether an optional feature is enabled in the current workspace
   - this workspace already has `src/lib/prisma/**`
-  - this workspace's app-owned FastMCP server lives in `src/lib/mcp/mcp_server.py`
-  - the default FastMCP config lives in `src/lib/mcp/fastmcp.json`
-  - `package.json` starts MCP through `npm run mcp`, which runs `settings/restart-mcp.ts`; manual FastMCP runs should pass the explicit nested config path because root auto-discovery does not find it
+  - this workspace currently has `mcp: false` in `caspian.config.json`, so do not assume `src/lib/mcp/**`, `settings/restart-mcp.ts`, or `npm run mcp` exist until MCP is explicitly enabled
+  - `package.json` currently defines `projectName`, `tailwind`, `tailwind:build`, `browserSync`, `browserSync:build`, `dev`, and `build`
+  - if a feature flag is false and the user wants that feature, ask before enabling it, then update `caspian.config.json` and use `npx casp update project` to refresh framework-managed files
+  - do not run `package.json` scripts by default for ordinary source edits; only use them when the user explicitly asks, the task requires them, or deployment prep needs `npm run build`
+  - `npm run dev` is a long-running local stack command that can regenerate `public/css/styles.css`, `settings/component-map.json`, `settings/files-list.json`, `__pycache__/`, and `.pyc` artifacts; those are generated outputs, not authored source files
+  - `settings/component-map.ts` and `settings/files-list.ts` own `settings/component-map.json` and `settings/files-list.json`; inspect the JSON when needed, but let the framework regenerate it instead of editing it by hand
   - auth policy lives in `src/lib/auth/auth_config.py`
   - the app-owned starter config in this workspace begins public-first with `is_all_routes_private=False`, so treat routes as public by default unless the app explicitly switches to all-private mode
   - choose all-private mode in `src/lib/auth/auth_config.py` only when public routes are the minority; otherwise keep mixed mode and maintain `private_routes`
