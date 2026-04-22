@@ -18,6 +18,7 @@ import caspianConfig from "../caspian.config.json";
 const { __dirname } = getFileMeta();
 const bs: BrowserSyncInstance = browserSync.create();
 
+const WORKSPACE_ROOT = join(__dirname, "..");
 const PUBLIC_IGNORE_DIRS = [""];
 let previousRouteFiles: string[] = [];
 let lastChangedFile: string | null = null;
@@ -32,7 +33,14 @@ function getReservedPorts(): Set<number> {
     return reservedPorts;
   }
 
-  const mcpSpecPath = join(__dirname, "..", "src", "lib", "mcp", "fastmcp.json");
+  const mcpSpecPath = join(
+    __dirname,
+    "..",
+    "src",
+    "lib",
+    "mcp",
+    "fastmcp.json",
+  );
   if (!existsSync(mcpSpecPath)) {
     return reservedPorts;
   }
@@ -159,6 +167,14 @@ function updateRouteFilesCache() {
   }
 }
 
+function isIgnoredPublicPath(absPath: string): boolean {
+  const normalizedPath = relative(WORKSPACE_ROOT, absPath).replace(/\\/g, "/");
+
+  return PUBLIC_IGNORE_DIRS.some(
+    (dir) => normalizedPath === dir || normalizedPath.startsWith(`${dir}/`),
+  );
+}
+
 const publicPipeline = new DebouncedWorker(
   async () => {
     console.log(chalk.cyan("→ Public directory changed, reloading browser..."));
@@ -191,8 +207,7 @@ const publicPipeline = new DebouncedWorker(
   createSrcWatcher(join(PUBLIC_DIR, "**", "*"), {
     onEvent: (_ev, abs, _) => {
       const relFromPublic = relative(PUBLIC_DIR, abs);
-      const normalized = relFromPublic.replace(/\\/g, "/");
-      if (PUBLIC_IGNORE_DIRS.includes(normalized.split("/")[0])) return;
+      if (isIgnoredPublicPath(abs)) return;
       publicPipeline.schedule(relFromPublic);
     },
     awaitWriteFinish: DEFAULT_AWF,

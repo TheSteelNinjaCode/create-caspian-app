@@ -28,6 +28,8 @@
 - In all-private mode, keep public exceptions in `public_routes`; the runtime defaults keep `/` public and keep `auth_routes=["/signin", "/signup"]` public.
 - Do not treat `token_auto_refresh` as the switch that makes routes private. In the current app it only affects sliding-session refresh if `auth.refresh_session()` is called.
 - Use PulsePoint and `pp.rpc(...)` as the default frontend and client-to-server contract unless the user requests another stack.
+- For file uploads and file-manager flows, keep browser interaction in route templates, keep upload and delete `@rpc()` actions in the owning `src/app/**/index.py`, keep shared storage and persistence helpers in `src/lib/**`, store metadata in Prisma, and store browser-accessible blobs under `public/storage/**`.
+- When runtime uploads write into `public/storage/**`, keep `public/storage` in `settings/bs-config.ts` `PUBLIC_IGNORE_DIRS` so `npm run dev` does not reload on each upload.
 - For logout flows, prefer `pp.rpc("signout")` backed by `@rpc(require_auth=True)` from page-level or component-level UI. Use a dedicated signout route only for plain form POST, no-JavaScript fallback, or other full-navigation edge cases.
 - Protect customized `src/lib/auth/auth_config.py` from updater overwrite by adding `./src/lib/auth/auth_config.py` to `excludeFiles` in `caspian.config.json`.
 - Treat `pp-component` on routes, layouts, and components, and `type="text/pp"` on owned PulsePoint scripts, as compiler-injected by the Python side; do not add them manually in authored templates unless the task is explicitly about runtime internals.
@@ -42,6 +44,7 @@
 
 - Treat `main.py` as the repo source of truth for FastAPI setup, static asset routes, auth bootstrap, middleware order, route registration, cache defaults, and error handlers.
 - Preserve the effective middleware execution order unless the task explicitly changes request semantics: `SessionMiddleware -> CSRFMiddleware -> AuthMiddleware -> RPCMiddleware`.
+- Do not move normal file upload or file-manager behavior into `main.py`; keep those actions in the owning route `index.py` and shared helpers in `src/lib/**`.
 - Document route param behavior exactly as implemented here.
 - Do not use `main.py` alone to infer whether optional features are enabled; confirm that in `caspian.config.json` first.
 
@@ -50,6 +53,7 @@
 - Keep `src/lib/` for app-owned shared non-UI code, service wrappers, validators, adapters, and reusable helpers.
 - Prefer `src/components/` for reusable rendered UI instead of placing component modules in `src/lib/`.
 - Reuse the generated `src/lib/prisma/` package for Python database access, but do not hand-edit files under `src/lib/prisma/`; regenerate them with `npx ppy generate` after schema changes.
+- For file managers, keep shared storage, normalization, and Prisma-backed persistence helpers here while route-owned upload and delete `@rpc()` actions stay in `src/app/**/index.py`.
 - When `caspian.config.json` has `mcp: true`, keep app-owned MCP tools in `src/lib/mcp/mcp_server.py` and keep the default FastMCP config in `src/lib/mcp/fastmcp.json`. If those locations change, update `settings/restart-mcp.ts` and the MCP docs together.
 - Keep auth policy in `src/lib/auth/auth_config.py`. Keep auth bootstrap and middleware order changes in `main.py`.
 
@@ -78,6 +82,7 @@
 - Do not author `pp-component="..."` manually in route or layout templates; the Python render pipeline injects it onto the single root element.
 - Do not author `type="text/pp"` manually in route or layout templates either. Use plain `<script>` in source and let the render path rewrite it.
 - Keep authored route and layout templates to one top-level lowercase HTML root element, the same constraint used for component templates. If a script is needed, keep it inside that root instead of as a sibling top-level node.
+- For upload managers and similar interactive lists, prefer `pp.state(...)` plus `pp-for` over manual DOM painting so rerenders keep the list stable.
 - Do not assume React, Vue, JSX, HTMX, or another frontend runtime unless the user explicitly requests one.
 
 ### `prisma/**`
@@ -112,6 +117,8 @@
   - if a feature flag is false and the user wants that feature, ask before enabling it, then update `caspian.config.json` and use `npx casp update project` to refresh framework-managed files
   - do not run `package.json` scripts by default for ordinary source edits; only use them when the user explicitly asks, the task requires them, or deployment prep needs `npm run build`
   - `npm run dev` is a long-running local stack command that can regenerate `public/css/styles.css`, `settings/component-map.json`, `settings/files-list.json`, `__pycache__/`, and `.pyc` artifacts; those are generated outputs, not authored source files
+  - `node_modules/caspian-utils/dist/docs/file-uploads.md` is the source doc for route-local upload and file-manager guidance in this workspace
+  - uploaded public blobs live under `public/storage/**`, and `settings/bs-config.ts` should keep `public/storage` in `PUBLIC_IGNORE_DIRS`
   - `settings/component-map.ts` and `settings/files-list.ts` own `settings/component-map.json` and `settings/files-list.json`; inspect the JSON when needed, but let the framework regenerate it instead of editing it by hand
   - auth policy lives in `src/lib/auth/auth_config.py`
   - the app-owned starter config in this workspace begins public-first with `is_all_routes_private=False`, so treat routes as public by default unless the app explicitly switches to all-private mode
