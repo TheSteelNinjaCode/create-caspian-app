@@ -5,14 +5,15 @@
 
 ## Global Rules
 
-- Use this source-of-truth order: app runtime and app-owned code first, installed `casp` runtime second, packaged markdown docs third.
+- Use this decision order: `caspian.config.json` for optional feature enablement, app runtime and app-owned code for current project behavior, installed `casp` runtime for framework internals, and packaged markdown docs for Caspian feature discovery and task routing.
 - As the app grows, prefer `src/components/` for reusable application UI and reserve `src/lib/` for reusable non-UI code such as services, validators, adapters, and shared helpers.
 - Read `./caspian.config.json` almost immediately before making feature, tooling, scaffolding, or file-placement decisions. Treat it as the workspace feature gate for flags such as `backendOnly`, `tailwindcss`, `mcp`, `prisma`, `typescript`, and `componentScanDirs`.
 - Treat `caspian.config.json` as the single source of truth for whether optional Caspian features are enabled in the current workspace. Use feature-specific docs, files, and commands only after the matching flag is confirmed as enabled.
 - If a feature is disabled and the user wants it, ask whether they want to enable it first, then update `caspian.config.json` and follow `npx casp update project` so framework-managed files align with the new feature set.
+- Treat `node_modules/caspian-utils/dist/docs/**` as packaged Caspian docs that teach AI how Caspian features work and where to look next. Their presence does not mean the feature is enabled in the current project.
 - For current repo behavior, trust `main.py`, `src/lib/**`, `public/js/**`, `prisma/**`, and `src/app/**` over generic Caspian docs.
 - For framework internals, trust `.venv/Lib/site-packages/casp/**` over generic or older upstream guidance.
-- When docs and runtime disagree, align the docs to the code that actually runs in this workspace.
+- When packaged docs conflict with project code or installed runtime, the project code, `caspian.config.json`, and installed runtime win. Keep the packaged docs feature-oriented and point AI back to the project files that decide actual enablement and behavior.
 - When `prisma/schema.prisma` changes, follow this order: run `npx prisma migrate dev`; if the change affects seed flow or `prisma/seed.ts`, run `npx prisma generate` and then `npx prisma db seed`; then run `npx ppy generate` so the Python ORM stays aligned with the schema.
 - Reuse the existing Python database layer in `src/lib/prisma/**`; do not create a second app-owned database abstraction unless the user explicitly asks for one.
 - Treat `src/lib/prisma/__init__.py`, `src/lib/prisma/db.py`, `src/lib/prisma/models.py`, and `settings/prisma-schema.json` as generated outputs owned by `npx ppy generate`; do not create or hand-edit them manually.
@@ -103,34 +104,12 @@
 
 ### `node_modules/caspian-utils/dist/docs/**/*.md`
 
-- These files are the local documentation layer, not the runtime. Verify every behavior claim against the actual code that runs.
-- Use this verification order:
+- These files are the packaged Caspian documentation layer, not the runtime and not the source of current workspace state.
+- Use them to help AI answer three questions: which Caspian feature applies, which project files should be inspected next, and which workflow is appropriate once the feature is confirmed as enabled.
+- Verify behavior claims in this order:
   1.  `caspian.config.json`, then `main.py`, `src/lib/**`, `public/js/**`, `prisma/**`, `src/app/**`
   2.  `.venv/Lib/site-packages/casp/**`
   3.  the markdown file being edited
-- Keep repo-specific facts accurate when they matter:
-  - `caspian.config.json` is the first config file to read for enabled workspace features and scan directories
-  - `caspian.config.json` is the single source of truth for whether an optional feature is enabled in the current workspace
-  - this workspace already has `src/lib/prisma/**`
-  - this workspace currently has `mcp: false` in `caspian.config.json`, so do not assume `src/lib/mcp/**`, `settings/restart-mcp.ts`, or `npm run mcp` exist until MCP is explicitly enabled
-  - `package.json` currently defines `projectName`, `tailwind`, `tailwind:build`, `browserSync`, `browserSync:build`, `dev`, and `build`
-  - if a feature flag is false and the user wants that feature, ask before enabling it, then update `caspian.config.json` and use `npx casp update project` to refresh framework-managed files
-  - do not run `package.json` scripts by default for ordinary source edits; only use them when the user explicitly asks, the task requires them, or deployment prep needs `npm run build`
-  - `npm run dev` is a long-running local stack command that can regenerate `public/css/styles.css`, `settings/component-map.json`, `settings/files-list.json`, `__pycache__/`, and `.pyc` artifacts; those are generated outputs, not authored source files
-  - `node_modules/caspian-utils/dist/docs/file-uploads.md` is the source doc for route-local upload and file-manager guidance in this workspace
-  - uploaded public blobs live under `public/storage/**`, and `settings/bs-config.ts` should keep `public/storage` in `PUBLIC_IGNORE_DIRS`
-  - `settings/component-map.ts` and `settings/files-list.ts` own `settings/component-map.json` and `settings/files-list.json`; inspect the JSON when needed, but let the framework regenerate it instead of editing it by hand
-  - auth policy lives in `src/lib/auth/auth_config.py`
-  - the app-owned starter config in this workspace begins public-first with `is_all_routes_private=False`, so treat routes as public by default unless the app explicitly switches to all-private mode
-  - choose all-private mode in `src/lib/auth/auth_config.py` only when public routes are the minority; otherwise keep mixed mode and maintain `private_routes`
-  - `public_routes` is the exception list for all-private apps, while `auth_routes=["/signin", "/signup"]` stays public by default unless the app explicitly needs different auth endpoints
-  - `token_auto_refresh` is not the route-privacy switch in the current app; it only matters when `auth.refresh_session()` is called
-  - protect customized `src/lib/auth/auth_config.py` by adding `./src/lib/auth/auth_config.py` to `excludeFiles` in `caspian.config.json`
-  - prefer logout via `pp.rpc("signout")` plus `@rpc(require_auth=True)` from page or component UI; use a dedicated signout route only for form-post or no-JavaScript fallbacks
-  - PulsePoint runtime lives in `public/js/pp-reactive-v2.js`
-  - `pp-component` is injected by the Python render pipeline, and `main.py` rewrites authored body scripts to `type="text/pp"`; authored route, layout, and component templates should not add those attributes manually
-  - route, layout, and component templates must keep a single top-level lowercase HTML root for `pp-component` injection, with any owned plain `<script>` kept inside that same root
-  - dynamic route params are passed to `page()` as a single positional `dict`
-  - `layout()` is sync-only in the installed runtime
-  - `StateManager` persistence depends on `request.state.session`, which is not bridged from `request.session` in the current `main.py`
-- Keep `index.md` and cross-links aligned when adding or changing pages.
+- Do not encode the current project's feature flags, file inventory, script list, or temporary status inside the packaged docs. Keep those facts in `.github/copilot-instructions.md`, `AGENTS.md`, or the project code.
+- When an optional feature doc is edited, phrase it as feature guidance, for example `when caspian.config.json has mcp: true`, instead of as a project snapshot such as `this workspace has mcp: false`.
+- Keep `index.md` discoverable as the manifest, keep cross-links aligned, and make each feature page explicit about when it applies and what file AI should inspect next.

@@ -2,37 +2,40 @@
 
 ## Purpose
 
-This workspace is a Caspian application plus a local copy of the packaged Caspian docs.
+This workspace is a Caspian application plus a packaged copy of the Caspian docs.
 
-When you work here, use the code that actually runs as the source of truth and use the markdown docs as the routing and explanation layer.
+When you work here, use `caspian.config.json` and the code that actually runs as the source of truth for this project. Use the packaged markdown docs under `node_modules/caspian-utils/dist/docs/` as the AI-facing Caspian feature and task-reference layer.
 
-## Source Of Truth Order
+Do not treat the existence of a packaged doc as proof that the feature is enabled in this project.
 
-Use this precedence whenever behavior, docs, and generated code disagree:
+## Decision Order
 
-1. App runtime and app-owned code
+Use this order depending on the question being answered:
+
+1. Optional feature enablement and generated surface area
+   - `caspian.config.json`
+2. App runtime and app-owned code for current project behavior
    - `main.py`
    - `src/app/**`
    - `src/lib/**`
    - `public/js/**`
    - `prisma/**`
-   - `caspian.config.json`
-2. Installed Caspian framework runtime
+3. Installed Caspian framework runtime
    - `.venv/Lib/site-packages/casp/**`
-3. Packaged Caspian docs in this workspace
+4. Packaged Caspian docs for feature discovery, file-placement guidance, and task routing
    - `node_modules/caspian-utils/dist/docs/**`
 
 If the task is about current repo behavior, prefer the app runtime.
 
 If the task is about framework internals, prefer the installed `casp` package.
 
-If docs differ from either of those, update the docs to match the code that actually runs.
+If packaged docs differ from the project or installed runtime, the project and runtime win. Keep the packaged docs reusable across Caspian projects and move project-specific clarifications into this file or `.github/copilot-instructions.md`.
 
 Before making feature, tooling, or scaffolding decisions, read `caspian.config.json` almost immediately. Treat it as the workspace feature gate for flags such as `backendOnly`, `tailwindcss`, `mcp`, `prisma`, `typescript`, and `componentScanDirs`.
 
 Treat `caspian.config.json` as the single source of truth for whether an optional Caspian feature is enabled in the current workspace. Use feature-specific docs only after the matching flag is confirmed as enabled. If a feature is disabled and the user wants it, ask whether they want to enable it first, then follow the Caspian update workflow to refresh framework-managed files.
 
-## Verified Workspace Facts
+## Workspace Rules
 
 - Local Caspian docs live under `node_modules/caspian-utils/dist/docs/`.
 - `main.py` is the application entry point and owns auth bootstrap, FastAPI setup, static asset routes, route registration, error handlers, cache defaults, and middleware wiring.
@@ -47,13 +50,13 @@ Treat `caspian.config.json` as the single source of truth for whether an optiona
 - Prefer logout via auth-protected RPC from page-level or component-level UI: `pp.rpc("signout")` backed by `@rpc(require_auth=True)`. Use a dedicated signout route only for plain form POST or no-JavaScript edge cases.
 - Protect customized `src/lib/auth/auth_config.py` from framework updates by adding `./src/lib/auth/auth_config.py` to `excludeFiles` in `caspian.config.json`.
 - This workspace already has an app-owned Python database layer in `src/lib/prisma/`.
-- This workspace currently has `mcp: false` in `caspian.config.json`, so do not assume `src/lib/mcp/**`, `settings/restart-mcp.ts`, or `npm run mcp` exist unless MCP is explicitly enabled later.
-- `package.json` currently defines `projectName`, `tailwind`, `tailwind:build`, `browserSync`, `browserSync:build`, `dev`, and `build`. Treat those scripts as opt-in operational commands, not default validation steps for ordinary source edits.
+- Do not assume `src/lib/mcp/**`, `settings/restart-mcp.ts`, or MCP-related scripts exist unless `caspian.config.json` confirms MCP is enabled and the update workflow has run.
+- Treat `package.json` scripts as opt-in operational commands, not default validation steps for ordinary source edits.
 - Reuse `src/lib/prisma/prisma`, `PrismaClient`, generated models, and helper types instead of creating a second Python database abstraction.
 - Prisma schema source of truth is `prisma/schema.prisma`.
-- The schema-change workflow in this workspace is: `npx prisma migrate dev`; if seed flow or `prisma/seed.ts` is involved, run `npx prisma generate` and then `npx prisma db seed`; then run `npx ppy generate`.
+- The schema-change workflow is: `npx prisma migrate dev`; if seed flow or `prisma/seed.ts` is involved, run `npx prisma generate` and then `npx prisma db seed`; then run `npx ppy generate`.
 - `npx ppy generate` owns `src/lib/prisma/__init__.py`, `src/lib/prisma/db.py`, `src/lib/prisma/models.py`, and `settings/prisma-schema.json`; do not hand-edit those generated files.
-- `caspian.config.json` is the first config file to check for enabled workspace features. In the current workspace it sets `backendOnly: false`, `tailwindcss: true`, `mcp: false`, `prisma: true`, `typescript: false`, and `componentScanDirs: ["src"]`.
+- `caspian.config.json` is the first config file to check for enabled workspace features. Read the actual values instead of inferring them from the docs.
 - As the app grows, prefer `src/components/` for reusable rendered UI and `src/lib/` for reusable non-UI support code.
 - PulsePoint runtime code is shipped in `public/js/pp-reactive-v2.js` and loaded from `public/js/main.js`.
 - `pp-component` is injected by the Python render pipeline onto page, layout, and component roots; authored route and component templates should not add it manually.
@@ -123,18 +126,15 @@ Use this map before making changes.
 - When a runtime change affects documentation, update the matching page in `node_modules/caspian-utils/dist/docs/`.
 - When a repo-level rule changes, update this file too.
 
-## Docs Alignment Notes
+## Docs Maintenance Rules
 
-The packaged docs in this workspace are already mostly aligned with the installed runtime, but keep these repo-specific clarifications in mind:
-
-- `database.md` is the source doc for the Prisma and Python ORM workflow in this repo: schema changes go through `npx prisma migrate dev`, optional `npx prisma generate` plus `npx prisma db seed`, then `npx ppy generate`, and generated ORM files under `src/lib/prisma/` plus `settings/prisma-schema.json` are not hand-edited.
-- `mcp.md` is the source doc for MCP-enabled workspaces, but in this workspace `caspian.config.json` currently has `mcp: false`, so do not assume `src/lib/mcp/**` or `npm run mcp` exist until MCP is explicitly enabled.
-- `file-uploads.md` is the source doc for route-local uploads and file-manager flows in this repo: keep upload and delete RPCs in the owning route `index.py`, keep shared storage plus Prisma helpers in `src/lib/**`, store browser-accessible blobs under `public/storage/**`, and keep that directory in `settings/bs-config.ts` `PUBLIC_IGNORE_DIRS`.
-- Feature-specific docs are conditional on `caspian.config.json`: use `database.md` only when `prisma: true`, use `mcp.md` only when `mcp: true`, and treat disabled-feature docs as reference material until the user chooses to enable that feature.
-- `auth.md` is the source doc for auth routing guidance: choose all-private mode only when public routes are the minority, keep auth policy in `src/lib/auth/auth_config.py`, protect that file with `excludeFiles` if customized, prefer auth-protected RPC logout from page or component UI, and keep dedicated signout routes for form-post or no-JavaScript fallbacks.
-- `state.md` is correct to warn that cross-request persistence depends on `request.state.session`, which is not bridged in the current `main.py`.
-- `commands.md`, `installation.md`, and `project-structure.md` are the source docs for this repo's package-script guardrails: do not auto-run npm scripts for ordinary edits, use `npm run build` only for deployment prep or explicit build requests, and treat `settings/component-map.json`, `settings/files-list.json`, `__pycache__/`, and `.pyc` files as generated artifacts.
-- `routing.md`, `components.md`, `auth.md`, `fetch-data.md`, `cache.md`, `pulsepoint.md`, and `validation.md` should continue to be validated against the installed `casp` package before any behavior claims are changed.
+- Treat `node_modules/caspian-utils/dist/docs/**` as packaged Caspian feature docs and AI routing docs, not as a snapshot of the current project.
+- Do not record this project's current feature flags, script inventory, or temporary file tree status inside the packaged docs.
+- Gate optional docs with `caspian.config.json`. Use phrasing such as `when caspian.config.json enables MCP` instead of `this workspace has mcp: false`.
+- Use the packaged docs to make AI aware of what Caspian can do, when a doc applies, and which project files should be inspected next.
+- Keep repo-specific clarifications in this file or `.github/copilot-instructions.md` rather than embedding them in the packaged docs unless the behavior is truly framework-wide.
+- Keep `index.md` and cross-links aligned so AI can discover the right task doc quickly.
+- Continue validating `routing.md`, `components.md`, `auth.md`, `fetch-data.md`, `cache.md`, `pulsepoint.md`, `validation.md`, `database.md`, and `mcp.md` against the installed `casp` runtime before changing behavior claims.
 
 ## Maintenance Checklist
 
@@ -142,4 +142,4 @@ Before merging doc or runtime changes:
 
 1. Compare the claim or behavior against `main.py`, `src/lib/**`, and `.venv/Lib/site-packages/casp/**`.
 2. Update the matching packaged doc in `node_modules/caspian-utils/dist/docs/` if the running behavior changed.
-3. Update this file if the repo-level source-of-truth rules or workspace facts changed.
+3. Update this file if the repo-level decision rules, workspace rules, or packaged-doc maintenance rules changed.
