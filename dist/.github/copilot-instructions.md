@@ -6,6 +6,7 @@
 ## Global Rules
 
 - Use this source-of-truth order: app runtime and app-owned code first, installed `casp` runtime second, packaged markdown docs third.
+- As the app grows, prefer `src/components/` for reusable application UI and reserve `src/lib/` for reusable non-UI code such as services, validators, adapters, and shared helpers.
 - Read `./caspian.config.json` almost immediately before making feature, tooling, scaffolding, or file-placement decisions. Treat it as the workspace feature gate for flags such as `backendOnly`, `tailwindcss`, `mcp`, `prisma`, `typescript`, and `componentScanDirs`.
 - Treat `caspian.config.json` as the single source of truth for whether optional Caspian features are enabled in the current workspace. Use feature-specific docs, files, and commands only after the matching flag is confirmed as enabled.
 - If a feature is disabled and the user wants it, ask whether they want to enable it first, then update `caspian.config.json` and follow `npx casp update project` so framework-managed files align with the new feature set.
@@ -46,10 +47,17 @@
 
 ### `src/lib/**/*.py`
 
-- Keep `src/lib/` for app-owned shared code, service wrappers, and reusable helpers.
+- Keep `src/lib/` for app-owned shared non-UI code, service wrappers, validators, adapters, and reusable helpers.
+- Prefer `src/components/` for reusable rendered UI instead of placing component modules in `src/lib/`.
 - Reuse the generated `src/lib/prisma/` package for Python database access, but do not hand-edit files under `src/lib/prisma/`; regenerate them with `npx ppy generate` after schema changes.
 - When `caspian.config.json` has `mcp: true`, keep app-owned MCP tools in `src/lib/mcp/mcp_server.py` and keep the default FastMCP config in `src/lib/mcp/fastmcp.json`. If those locations change, update `settings/restart-mcp.ts` and the MCP docs together.
 - Keep auth policy in `src/lib/auth/auth_config.py`. Keep auth bootstrap and middleware order changes in `main.py`.
+
+### `src/components/**/*.py`
+
+- Keep `src/components/` as the default home for reusable application UI components.
+- Move shared cards, forms, shells, navigation, and other reusable rendered building blocks here once they are used across routes or features.
+- Keep route-owned markup in `src/app/**`, and keep non-UI helpers or services in `src/lib/**`.
 
 ### `public/js/main.js`
 

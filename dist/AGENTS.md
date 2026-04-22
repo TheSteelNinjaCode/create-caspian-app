@@ -54,6 +54,7 @@ Treat `caspian.config.json` as the single source of truth for whether an optiona
 - The schema-change workflow in this workspace is: `npx prisma migrate dev`; if seed flow or `prisma/seed.ts` is involved, run `npx prisma generate` and then `npx prisma db seed`; then run `npx ppy generate`.
 - `npx ppy generate` owns `src/lib/prisma/__init__.py`, `src/lib/prisma/db.py`, `src/lib/prisma/models.py`, and `settings/prisma-schema.json`; do not hand-edit those generated files.
 - `caspian.config.json` is the first config file to check for enabled workspace features. In the current workspace it sets `backendOnly: false`, `tailwindcss: true`, `mcp: false`, `prisma: true`, `typescript: false`, and `componentScanDirs: ["src"]`.
+- As the app grows, prefer `src/components/` for reusable rendered UI and `src/lib/` for reusable non-UI support code.
 - PulsePoint runtime code is shipped in `public/js/pp-reactive-v2.js` and loaded from `public/js/main.js`.
 - `pp-component` is injected by the Python render pipeline onto page, layout, and component roots; authored route and component templates should not add it manually.
 - `main.py` runs `transform_scripts(...)`, so authored body `<script>` tags are rewritten to `<script type="text/pp">` in rendered HTML; route, layout, and component templates should write plain `<script>` in source.
@@ -88,7 +89,9 @@ Use this map before making changes.
 ## Editing Rules
 
 - Keep app-owned shared code in `src/lib/**`.
+- Keep reusable application UI components in `src/components/**`.
 - Keep route-specific logic in `src/app/**`.
+- When deciding between `src/components/**` and `src/lib/**`, put reusable rendered UI in `src/components/**` and put services, validators, adapters, database helpers, and other non-UI support code in `src/lib/**`.
 - Read `caspian.config.json` before deciding whether a Caspian feature should be used, documented, scaffolded, or avoided in the current workspace.
 - Treat `caspian.config.json` as the single source of truth for optional features. Do not use feature-specific files, commands, or docs until the corresponding flag is enabled.
 - If a feature flag is false and the user wants that feature, ask for confirmation first, then update `caspian.config.json` and run `npx casp update project` so framework-managed files align with the new feature set.
