@@ -38,6 +38,12 @@ Before making feature, tooling, or scaffolding decisions, read `caspian.config.j
 - Effective request order is therefore: `SessionMiddleware -> CSRFMiddleware -> AuthMiddleware -> RPCMiddleware`.
 - App-level auth policy lives in `src/lib/auth/auth_config.py`.
 - `main.py` applies auth settings with `configure_auth(build_auth_settings())` and registers `GithubProvider()` plus `GoogleProvider()`.
+- In the app-owned starter config used in this workspace, routes start public because `src/lib/auth/auth_config.py` sets `is_all_routes_private=False` by default.
+- Choose route privacy mode in `src/lib/auth/auth_config.py` at app setup time: use `is_all_routes_private=True` when most routes should require auth, otherwise keep `is_all_routes_private=False` and list only the protected routes in `private_routes`.
+- In all-private mode, treat `public_routes` as the exception list. The runtime defaults keep `/` public and keep `auth_routes=["/signin", "/signup"]` public.
+- `token_auto_refresh` does not make routes private in the current app; it only affects sliding-session refresh if `auth.refresh_session()` is called.
+- Prefer logout via auth-protected RPC from page-level or component-level UI: `pp.rpc("signout")` backed by `@rpc(require_auth=True)`. Use a dedicated signout route only for plain form POST or no-JavaScript edge cases.
+- Protect customized `src/lib/auth/auth_config.py` from framework updates by adding `./src/lib/auth/auth_config.py` to `excludeFiles` in `caspian.config.json`.
 - This workspace already has an app-owned Python database layer in `src/lib/prisma/`.
 - This workspace now has an app-owned FastMCP server at `src/lib/mcp/mcp_server.py`, with `src/lib/mcp/fastmcp.json` as the default MCP server spec.
 - `package.json` starts MCP through `npm run mcp`, which runs `settings/restart-mcp.ts` and prefers `src/lib/mcp/fastmcp.json` before legacy root configs. Direct FastMCP runs should pass the explicit nested config path.
@@ -85,6 +91,11 @@ Use this map before making changes.
 - When `prisma/schema.prisma` changes, run `npx prisma migrate dev` first. If seed flow or `prisma/seed.ts` is involved, run `npx prisma generate` and then `npx prisma db seed`. After that, run `npx ppy generate` so the Python ORM layer and `settings/prisma-schema.json` stay aligned.
 - Keep auth policy in `src/lib/auth/auth_config.py`.
 - Keep auth bootstrap, middleware ordering, provider wiring, and router behavior in `main.py`.
+- Treat the app-owned `src/lib/auth/auth_config.py` as the effective default when generating routes for this repo: it starts public-first with `is_all_routes_private=False` unless the app explicitly switches to all-private mode.
+- Decide all-private versus mixed public/private routing in `src/lib/auth/auth_config.py` before creating many routes; use all-private mode only when public routes are the minority.
+- Keep public exceptions in `public_routes`, keep explicit protected routes in `private_routes` when not using all-private mode, and leave default `auth_routes` alone unless the app explicitly needs custom auth endpoints.
+- Do not treat `token_auto_refresh` as the switch for private routes.
+- For logout flows, prefer `pp.rpc("signout")` plus `@rpc(require_auth=True)` in page or component UI. Only scaffold a signout route for no-JavaScript, form-post, or full-navigation edge cases.
 - When MCP is enabled, keep the app-owned FastMCP server in `src/lib/mcp/mcp_server.py` and the default config in `src/lib/mcp/fastmcp.json`. If those paths move, update `settings/restart-mcp.ts` and the MCP docs together.
 - Use PulsePoint and `pp.rpc(...)` as the default frontend and browser-to-server contract unless the user explicitly wants another stack.
 - Treat `pp-component` as a framework-owned attribute on authored templates. Document it, but do not manually add it in normal route or component HTML.
@@ -101,6 +112,7 @@ The packaged docs in this workspace are already mostly aligned with the installe
 
 - `database.md` is the source doc for the Prisma and Python ORM workflow in this repo: schema changes go through `npx prisma migrate dev`, optional `npx prisma generate` plus `npx prisma db seed`, then `npx ppy generate`, and generated ORM files under `src/lib/prisma/` plus `settings/prisma-schema.json` are not hand-edited.
 - `mcp.md` is the source doc for the nested FastMCP config path, the app-owned MCP server location, direct FastMCP command usage, and the workspace runner discovery order.
+- `auth.md` is the source doc for auth routing guidance: choose all-private mode only when public routes are the minority, keep auth policy in `src/lib/auth/auth_config.py`, protect that file with `excludeFiles` if customized, prefer auth-protected RPC logout from page or component UI, and keep dedicated signout routes for form-post or no-JavaScript fallbacks.
 - `state.md` is correct to warn that cross-request persistence depends on `request.state.session`, which is not bridged in the current `main.py`.
 - `routing.md`, `components.md`, `auth.md`, `fetch-data.md`, `cache.md`, `pulsepoint.md`, and `validation.md` should continue to be validated against the installed `casp` package before any behavior claims are changed.
 

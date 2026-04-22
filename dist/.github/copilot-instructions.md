@@ -15,7 +15,13 @@
 - Treat `src/lib/prisma/__init__.py`, `src/lib/prisma/db.py`, `src/lib/prisma/models.py`, and `settings/prisma-schema.json` as generated outputs owned by `npx ppy generate`; do not create or hand-edit them manually.
 - When `caspian.config.json` has `mcp: true`, treat `src/lib/mcp/mcp_server.py` as the app-owned FastMCP server and `src/lib/mcp/fastmcp.json` as the default MCP config. Use `npm run mcp` or `fastmcp run src/lib/mcp/fastmcp.json`; do not assume root `fastmcp.json` auto-discovery.
 - Keep auth policy in `src/lib/auth/auth_config.py` and keep auth bootstrap, middleware wiring, and provider registration in `main.py`.
+- In app-owned starter config like this workspace, routes start public because `src/lib/auth/auth_config.py` sets `is_all_routes_private=False` by default.
+- Decide route privacy in `src/lib/auth/auth_config.py` at app setup time: use `is_all_routes_private=True` when only a few routes should stay public, otherwise keep `is_all_routes_private=False` and list the protected routes in `private_routes`.
+- In all-private mode, keep public exceptions in `public_routes`; the runtime defaults keep `/` public and keep `auth_routes=["/signin", "/signup"]` public.
+- Do not treat `token_auto_refresh` as the switch that makes routes private. In the current app it only affects sliding-session refresh if `auth.refresh_session()` is called.
 - Use PulsePoint and `pp.rpc(...)` as the default frontend and client-to-server contract unless the user requests another stack.
+- For logout flows, prefer `pp.rpc("signout")` backed by `@rpc(require_auth=True)` from page-level or component-level UI. Use a dedicated signout route only for plain form POST, no-JavaScript fallback, or other full-navigation edge cases.
+- Protect customized `src/lib/auth/auth_config.py` from updater overwrite by adding `./src/lib/auth/auth_config.py` to `excludeFiles` in `caspian.config.json`.
 - Treat `pp-component` on routes, layouts, and components, and `type="text/pp"` on owned PulsePoint scripts, as compiler-injected by the Python side; do not add them manually in authored templates unless the task is explicitly about runtime internals.
 - `layout()` is synchronous in the installed runtime. Put async I/O in `page()` or `@rpc()`.
 - Dynamic route params currently reach `page()` as a single positional `dict`, with query params injected by name and `request` injected by keyword when declared.
@@ -89,6 +95,12 @@
   - the default FastMCP config lives in `src/lib/mcp/fastmcp.json`
   - `package.json` starts MCP through `npm run mcp`, which runs `settings/restart-mcp.ts`; manual FastMCP runs should pass the explicit nested config path because root auto-discovery does not find it
   - auth policy lives in `src/lib/auth/auth_config.py`
+  - the app-owned starter config in this workspace begins public-first with `is_all_routes_private=False`, so treat routes as public by default unless the app explicitly switches to all-private mode
+  - choose all-private mode in `src/lib/auth/auth_config.py` only when public routes are the minority; otherwise keep mixed mode and maintain `private_routes`
+  - `public_routes` is the exception list for all-private apps, while `auth_routes=["/signin", "/signup"]` stays public by default unless the app explicitly needs different auth endpoints
+  - `token_auto_refresh` is not the route-privacy switch in the current app; it only matters when `auth.refresh_session()` is called
+  - protect customized `src/lib/auth/auth_config.py` by adding `./src/lib/auth/auth_config.py` to `excludeFiles` in `caspian.config.json`
+  - prefer logout via `pp.rpc("signout")` plus `@rpc(require_auth=True)` from page or component UI; use a dedicated signout route only for form-post or no-JavaScript fallbacks
   - PulsePoint runtime lives in `public/js/pp-reactive-v2.js`
   - `pp-component` is injected by the Python render pipeline, and `main.py` rewrites authored body scripts to `type="text/pp"`; authored route, layout, and component templates should not add those attributes manually
   - route, layout, and component templates must keep a single top-level lowercase HTML root for `pp-component` injection, with any owned plain `<script>` kept inside that same root
