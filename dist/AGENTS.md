@@ -4,7 +4,7 @@
 
 This workspace is a Caspian application plus a packaged copy of the Caspian docs.
 
-When you work here, use `caspian.config.json` and the code that actually runs as the source of truth for this project. Use the packaged markdown docs under `node_modules/caspian-utils/dist/docs/` as the AI-facing Caspian feature and task-reference layer.
+When you work here, use `caspian.config.json` and the code that actually runs as the source of truth for this project. Use workspace file instructions under `.github/instructions/**/*.instructions.md` as the task-specific instruction layer when they match the work, and use the packaged markdown docs under `node_modules/caspian-utils/dist/docs/` as the AI-facing Caspian feature and task-reference layer.
 
 Do not treat the existence of a packaged doc as proof that the feature is enabled in this project.
 
@@ -20,9 +20,11 @@ Use this order depending on the question being answered:
    - `src/lib/**`
    - `public/js/**`
    - `prisma/**`
-3. Installed Caspian framework runtime
+3. Matching workspace file instructions for task-specific guidance
+   - `.github/instructions/**/*.instructions.md`
+4. Installed Caspian framework runtime
    - `.venv/Lib/site-packages/casp/**`
-4. Packaged Caspian docs for feature discovery, file-placement guidance, and task routing
+5. Packaged Caspian docs for feature discovery, file-placement guidance, and task routing
    - `node_modules/caspian-utils/dist/docs/**`
 
 If the task is about current repo behavior, prefer the app runtime.
@@ -35,9 +37,12 @@ Before making feature, tooling, or scaffolding decisions, read `caspian.config.j
 
 Treat `caspian.config.json` as the single source of truth for whether an optional Caspian feature is enabled in the current workspace. Use feature-specific docs only after the matching flag is confirmed as enabled. If a feature is disabled and the user wants it, ask whether they want to enable it first, then follow the Caspian update workflow to refresh framework-managed files.
 
+When `.github/instructions/**/*.instructions.md` files exist, treat them as workspace-local instructions for specific third-party libraries, component kits, icon systems, integrations, and implementation rules. Read the matching instruction before deciding how to implement work on that surface, but do not let it override `caspian.config.json`, the project code, or the installed runtime.
+
 ## Workspace Rules
 
 - Local Caspian docs live under `node_modules/caspian-utils/dist/docs/`.
+- Workspace file instructions live under `.github/instructions/**/*.instructions.md` when the repo needs task- or library-specific AI guidance that should not be always-on.
 - `main.py` is the application entry point and owns auth bootstrap, FastAPI setup, static asset routes, route registration, error handlers, cache defaults, and middleware wiring.
 - Middleware is added in this source order: `RPCMiddleware`, `AuthMiddleware`, `CSRFMiddleware`, `SessionMiddleware`.
 - Effective request order is therefore: `SessionMiddleware -> CSRFMiddleware -> AuthMiddleware -> RPCMiddleware`.
@@ -82,6 +87,7 @@ Use this map before making changes.
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
 | Project layout and file placement         | `node_modules/caspian-utils/dist/docs/index.md`, `node_modules/caspian-utils/dist/docs/project-structure.md` | current workspace tree                                                           |
 | Feature availability and tooling switches | `caspian.config.json`                                                                                        | current workspace tree, `main.py`, `prisma/**`, `public/js/**`                   |
+| Library-specific and task-specific rules  | matching `.github/instructions/**/*.instructions.md` files                                                   | `caspian.config.json`, current workspace tree, owning app and lib files          |
 | MCP server layout and launch flow         | `node_modules/caspian-utils/dist/docs/mcp.md`                                                                | `settings/restart-mcp.ts`, `package.json`, `src/lib/mcp/**`                      |
 | Routing, layouts, metadata                | `node_modules/caspian-utils/dist/docs/routing.md`                                                            | `main.py`, `.venv/Lib/site-packages/casp/layout.py`                              |
 | Auth, sessions, RBAC, providers           | `node_modules/caspian-utils/dist/docs/auth.md`                                                               | `src/lib/auth/auth_config.py`, `main.py`, `.venv/Lib/site-packages/casp/auth.py` |
@@ -121,7 +127,8 @@ Use this map before making changes.
 - Treat `pp-component` as a framework-owned attribute on authored templates. Document it, but do not manually add it in normal route or component HTML.
 - Treat `type="text/pp"` on PulsePoint scripts as a render-time attribute too. In authored route, layout, and component HTML, write plain `<script>` and let Caspian rewrite it.
 - Keep route and component HTML templates to a single top-level lowercase HTML element so the Python side can inject `pp-component` safely. Keep any owned PulsePoint script inside that same root instead of as a sibling top-level node.
-- Keep Copilot guidance consolidated in `.github/copilot-instructions.md`; do not add `.github/instructions/` in this workspace.
+- Keep repo-wide always-on Copilot guidance consolidated in `.github/copilot-instructions.md`.
+- Use `.github/instructions/**/*.instructions.md` for narrower file-, task-, library-, or implementation-specific instructions, and keep those files tightly scoped instead of duplicating general repo rules.
 - When writing docs about route behavior, describe the param passing and layout behavior implemented in the current runtime, not generic upstream assumptions.
 - When a runtime change affects documentation, update the matching page in `node_modules/caspian-utils/dist/docs/`.
 - When a repo-level rule changes, update this file too.
@@ -129,6 +136,9 @@ Use this map before making changes.
 ## Docs Maintenance Rules
 
 - Treat `node_modules/caspian-utils/dist/docs/**` as packaged Caspian feature docs and AI routing docs, not as a snapshot of the current project.
+- Treat `.github/instructions/**/*.instructions.md` as the workspace-local instruction layer for third-party libraries and narrowly scoped implementation guidance.
+- Keep workspace instruction files specific to the surface they govern. Use filenames, `description`, and `applyTo` patterns that help the agent discover the right file before coding.
+- Do not duplicate broad Caspian or repo-wide rules across many instruction files; keep shared guidance in `.github/copilot-instructions.md` and this file.
 - Do not record this project's current feature flags, script inventory, or temporary file tree status inside the packaged docs.
 - Gate optional docs with `caspian.config.json`. Use phrasing such as `when caspian.config.json enables MCP` instead of `this workspace has mcp: false`.
 - Use the packaged docs to make AI aware of what Caspian can do, when a doc applies, and which project files should be inspected next.

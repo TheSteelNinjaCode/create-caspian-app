@@ -1,15 +1,16 @@
 # Copilot Instructions
 
 - Read `AGENTS.md` before working in `main.py`, `src/lib/**`, `.venv/Lib/site-packages/casp/**`, `public/js/**`, `prisma/**`, or `node_modules/caspian-utils/dist/docs/**`.
-- Keep all repo-level Copilot guidance in this file. Do not add `.github/instructions/` for this workspace.
+- Keep repo-wide always-on Copilot guidance in this file. Use `.github/instructions/**/*.instructions.md` for narrower task-, file-, library-, or implementation-specific guidance when that extra context should not load on every request.
 
 ## Global Rules
 
-- Use this decision order: `caspian.config.json` for optional feature enablement, app runtime and app-owned code for current project behavior, installed `casp` runtime for framework internals, and packaged markdown docs for Caspian feature discovery and task routing.
+- Use this decision order: `caspian.config.json` for optional feature enablement, app runtime and app-owned code for current project behavior, matching workspace instruction files under `.github/instructions/**/*.instructions.md` for task-specific implementation guidance, installed `casp` runtime for framework internals, and packaged markdown docs for Caspian feature discovery and task routing.
 - As the app grows, prefer `src/components/` for reusable application UI and reserve `src/lib/` for reusable non-UI code such as services, validators, adapters, and shared helpers.
 - Read `./caspian.config.json` almost immediately before making feature, tooling, scaffolding, or file-placement decisions. Treat it as the workspace feature gate for flags such as `backendOnly`, `tailwindcss`, `mcp`, `prisma`, `typescript`, and `componentScanDirs`.
 - Treat `caspian.config.json` as the single source of truth for whether optional Caspian features are enabled in the current workspace. Use feature-specific docs, files, and commands only after the matching flag is confirmed as enabled.
 - If a feature is disabled and the user wants it, ask whether they want to enable it first, then update `caspian.config.json` and follow `npx casp update project` so framework-managed files align with the new feature set.
+- When `.github/instructions/**/*.instructions.md` files exist, treat them as workspace-local file instructions for specific libraries, component systems, icon sets, integrations, and implementation rules. Read the matching instruction before deciding how to implement work in that area, but do not let it override `caspian.config.json`, app code, or installed runtime behavior.
 - Treat `node_modules/caspian-utils/dist/docs/**` as packaged Caspian docs that teach AI how Caspian features work and where to look next. Their presence does not mean the feature is enabled in the current project.
 - For current repo behavior, trust `main.py`, `src/lib/**`, `public/js/**`, `prisma/**`, and `src/app/**` over generic Caspian docs.
 - For framework internals, trust `.venv/Lib/site-packages/casp/**` over generic or older upstream guidance.
@@ -101,6 +102,13 @@
 - Treat these files as framework internals.
 - Only change them when the task is explicitly about Caspian core behavior, installed-runtime debugging, or documentation that must match the installed implementation.
 - If behavior changes here, update the matching docs under `node_modules/caspian-utils/dist/docs/`.
+
+### `.github/instructions/**/*.instructions.md`
+
+- Treat these files as workspace-local, task-scoped AI instructions for third-party libraries, design systems, icon packs, integrations, and narrowly scoped implementation rules.
+- Check for a matching instruction file almost immediately before coding when the task mentions or touches a library or workflow that may have dedicated guidance, for example PHPXUI, ppicons, or another named integration.
+- Keep these files specific and discoverable: the filename, `description`, and `applyTo` pattern should make it obvious when the instruction applies.
+- Use these files to guide implementation choices and coding style for that surface, but keep actual runtime behavior grounded in `caspian.config.json`, app code, and installed framework code.
 
 ### `node_modules/caspian-utils/dist/docs/**/*.md`
 
