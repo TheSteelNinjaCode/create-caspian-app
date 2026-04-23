@@ -106,7 +106,7 @@
 ### `.github/instructions/**/*.instructions.md`
 
 - Treat these files as workspace-local, task-scoped AI instructions for third-party libraries, design systems, icon packs, integrations, and narrowly scoped implementation rules.
-- Check for a matching instruction file almost immediately before coding when the task mentions or touches a library or workflow that may have dedicated guidance, for example PHPXUI, ppicons, or another named integration.
+- Check for a matching instruction file almost immediately before coding when the task mentions or touches a library or workflow that may have dedicated guidance, for example maddex, ppicons, or another named integration.
 - Keep these files specific and discoverable: the filename, `description`, and `applyTo` pattern should make it obvious when the instruction applies.
 - Use these files to guide implementation choices and coding style for that surface, but keep actual runtime behavior grounded in `caspian.config.json`, app code, and installed framework code.
 
