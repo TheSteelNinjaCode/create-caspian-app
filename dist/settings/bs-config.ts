@@ -1,5 +1,6 @@
 import { writeFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import browserSync, { BrowserSyncInstance } from "browser-sync";
+import { execFile } from "child_process";
 import { generateFileListJson } from "./files-list.js";
 import { join, dirname, relative } from "path";
 import { getFileMeta, PUBLIC_DIR, SRC_DIR } from "./utils.js";
@@ -10,9 +11,10 @@ import {
   waitForPort,
 } from "./python-server.js";
 import { componentMap } from "./component-map.js";
-import { createServer } from "net";
+import { Socket } from "net";
 import chalk from "chalk";
-import { networkInterfaces } from "os";
+import { networkInterfaces, platform } from "os";
+import { promisify } from "util";
 import caspianConfig from "../caspian.config.json";
 
 const { __dirname } = getFileMeta();
@@ -25,6 +27,12 @@ let lastChangedFile: string | null = null;
 
 let pythonPort = 0;
 let bsPort = 0;
+const execFileAsync = promisify(execFile);
+const PORT_PROBE_HOST = "127.0.0.1";
+
+function isWindows(): boolean {
+  return platform() === "win32";
+}
 
 function getReservedPorts(): Set<number> {
   const reservedPorts = new Set<number>();
@@ -59,24 +67,78 @@ function getReservedPorts(): Set<number> {
   return reservedPorts;
 }
 
-function getAvailablePort(
+function hasLoopbackListener(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new Socket();
+    socket.setTimeout(250);
+
+    socket.on("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+
+    socket.on("timeout", () => {
+      socket.destroy();
+      resolve(false);
+    });
+
+    socket.on("error", () => {
+      socket.destroy();
+      resolve(false);
+    });
+
+    socket.connect(port, PORT_PROBE_HOST);
+  });
+}
+
+async function hasWindowsTcpListener(port: number): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync(
+      "netstat",
+      ["-ano", "-p", "TCP"],
+      { windowsHide: true },
+    );
+
+    return stdout.split(/\r?\n/).some((line) => {
+      const parts = line.trim().split(/\s+/);
+      return (
+        parts.length >= 4 &&
+        parts[0].toUpperCase() === "TCP" &&
+        parts[1].endsWith(`:${port}`) &&
+        parts[3].toUpperCase() === "LISTENING"
+      );
+    });
+  } catch {
+    return false;
+  }
+}
+
+async function isPortAvailable(
+  port: number,
+  reservedPorts: Set<number>,
+): Promise<boolean> {
+  if (reservedPorts.has(port)) {
+    return false;
+  }
+
+  if (isWindows() && (await hasWindowsTcpListener(port))) {
+    return false;
+  }
+
+  return !(await hasLoopbackListener(port));
+}
+
+async function getAvailablePort(
   startPort: number,
   reservedPorts: Set<number> = new Set(),
 ): Promise<number> {
-  return new Promise((resolve) => {
-    if (reservedPorts.has(startPort)) {
-      resolve(getAvailablePort(startPort + 1, reservedPorts));
-      return;
-    }
+  let port = startPort;
 
-    const server = createServer();
-    server.listen(startPort, () => {
-      server.close(() => resolve(startPort));
-    });
-    server.on("error", () => {
-      resolve(getAvailablePort(startPort + 1, reservedPorts));
-    });
-  });
+  while (!(await isPortAvailable(port, reservedPorts))) {
+    port += 1;
+  }
+
+  return port;
 }
 
 function getExternalIP(): string | null {
