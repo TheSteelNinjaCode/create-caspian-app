@@ -39,6 +39,17 @@ Treat `caspian.config.json` as the single source of truth for whether an optiona
 
 When `.github/instructions/**/*.instructions.md` files exist, treat them as workspace-local instructions for specific third-party libraries, component kits, icon systems, integrations, and implementation rules. Read the matching instruction before deciding how to implement work on that surface, but do not let it override `caspian.config.json`, the project code, or the installed runtime.
 
+## BrowserSync URL source of truth
+
+When AI needs to test or confirm whether a page route, exposed function request, proxy-backed response, or local server workflow is working, check `./settings/bs-config.json` first.
+
+Important rules:
+
+- use `./settings/bs-config.json` as the source of truth for the active BrowserSync URLs in this app
+- do **not** assume the proxy remains on the default `http://localhost:5090`; if that port is already in use, Caspian may use a different port
+- confirm the current `local`, `external`, `ui`, and `uiExternal` values in `./settings/bs-config.json` before suggesting a browser URL, route test URL, or BrowserSync UI URL
+- when frontend console logs, network errors, or terminal output suggest the app is being tested through the wrong URL or proxy port, re-check `./settings/bs-config.json` before changing app code
+
 ## Workspace Rules
 
 - Local Caspian docs live under `node_modules/caspian-utils/dist/docs/`.
