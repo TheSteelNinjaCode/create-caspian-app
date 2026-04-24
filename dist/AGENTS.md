@@ -64,6 +64,8 @@ Important rules:
 - In all-private mode, treat `public_routes` as the exception list. The runtime defaults keep `/` public and keep `auth_routes=["/signin", "/signup"]` public.
 - `token_auto_refresh` does not make routes private in the current app; it only affects sliding-session refresh if `auth.refresh_session()` is called.
 - Prefer logout via auth-protected RPC from page-level or component-level UI: `pp.rpc("signout")` backed by `@rpc(require_auth=True)`. Use a dedicated signout route only for plain form POST or no-JavaScript edge cases.
+- Use PulsePoint as the default reactive frontend layer for app UI.
+- For CRUD operations and any browser-initiated reads from the backend, use server `@rpc()` actions and client `pp.rpc(...)` calls unless the user explicitly asks for another integration pattern.
 - Protect customized `src/lib/auth/auth_config.py` from framework updates by adding `./src/lib/auth/auth_config.py` to `excludeFiles` in `caspian.config.json`.
 - This workspace already has an app-owned Python database layer in `src/lib/prisma/`.
 - Do not assume `src/lib/mcp/**`, `settings/restart-mcp.ts`, or MCP-related scripts exist unless `caspian.config.json` confirms MCP is enabled and the update workflow has run.
@@ -88,7 +90,8 @@ Important rules:
 - `StateManager` reads and writes `request.state.session`, but the current middleware stack in `main.py` does not mirror `request.session` into `request.state.session`.
 - Do not assume `StateManager` persistence survives across requests until that bridge exists.
 - Route HTML caching uses `caches/` and `caches/cache_manifest.json` through `casp.cache_handler`.
-- The current app tree has root templates in `src/app/` and already includes route-specific `index.py` files where routes need server-side logic, including upload and file-manager flows.
+- The current app tree has root templates in `src/app/`, and route-specific `index.py` files belong only where routes need server-side logic, metadata, or non-visual handling such as uploads or redirects.
+- For route creation, keep page markup in `src/app/**/index.html`. If a route is UI-only, stop there. Add `src/app/**/index.py` only as a companion when the same route needs metadata, `page()`, `@rpc()` actions, auth checks, caching, redirects, or other server-side behavior. Do not place route HTML in `index.py`; use a lone `index.py` only for non-visual routes such as redirect-only or action-only handlers.
 
 ## Task Routing
 
@@ -114,6 +117,7 @@ Use this map before making changes.
 - Keep app-owned shared code in `src/lib/**`.
 - Keep reusable application UI components in `src/components/**`.
 - Keep route-specific logic in `src/app/**`.
+- For route creation, keep page markup in `src/app/**/index.html`. If a route is UI-only, `index.html` alone is sufficient. Add `src/app/**/index.py` only as a companion when the same route needs metadata, `page()`, `@rpc()` actions, auth checks, caching, redirects, or other server-side behavior. Do not place route HTML in `index.py`; use a lone `index.py` only for non-visual routes such as redirect-only or action-only handlers.
 - For file-manager work, keep route-owned upload and delete `@rpc()` actions in `src/app/**/index.py`, keep shared storage and Prisma helper logic in `src/lib/**`, and keep uploaded public blobs under `public/storage/**`.
 - When deciding between `src/components/**` and `src/lib/**`, put reusable rendered UI in `src/components/**` and put services, validators, adapters, database helpers, and other non-UI support code in `src/lib/**`.
 - Read `caspian.config.json` before deciding whether a Caspian feature should be used, documented, scaffolded, or avoided in the current workspace.
@@ -134,7 +138,8 @@ Use this map before making changes.
 - Do not treat `token_auto_refresh` as the switch for private routes.
 - For logout flows, prefer `pp.rpc("signout")` plus `@rpc(require_auth=True)` in page or component UI. Only scaffold a signout route for no-JavaScript, form-post, or full-navigation edge cases.
 - When MCP is enabled, keep the app-owned FastMCP server in `src/lib/mcp/mcp_server.py` and the default config in `src/lib/mcp/fastmcp.json`. If those paths move, update `settings/restart-mcp.ts` and the MCP docs together.
-- Use PulsePoint and `pp.rpc(...)` as the default frontend and browser-to-server contract unless the user explicitly wants another stack.
+- Use PulsePoint as the default reactive frontend and browser-side UI layer unless the user explicitly wants another stack.
+- For CRUD operations and any browser-initiated reads from the backend, use `@rpc()` plus `pp.rpc(...)` as the default contract instead of ad hoc fetch or parallel REST endpoints unless the user explicitly asks for them.
 - Treat `pp-component` as a framework-owned attribute on authored templates. Document it, but do not manually add it in normal route or component HTML.
 - Treat `type="text/pp"` on PulsePoint scripts as a render-time attribute too. In authored route, layout, and component HTML, write plain `<script>` and let Caspian rewrite it.
 - Keep route and component HTML templates to a single top-level lowercase HTML element so the Python side can inject `pp-component` safely. Keep any owned PulsePoint script inside that same root instead of as a sibling top-level node.
