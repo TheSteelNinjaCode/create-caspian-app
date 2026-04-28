@@ -34,6 +34,7 @@
 - Treat Caspian component usage as HTML-first in the current runtime: import Python components with `<!-- @import ... -->` and render them as kebab-cased `x-*` tags such as `<x-button />` or `<x-command-dialog />`.
 - For CRUD operations and any browser-initiated reads from the backend, use route or backend `@rpc()` actions on the server and `pp.rpc(...)` from PulsePoint code on the client unless the user explicitly asks for another integration pattern.
 - For route creation, keep page markup in `src/app/**/index.html`. If a route is UI-only, `index.html` alone is sufficient. Add `src/app/**/index.py` only as a companion when the same route needs metadata, `page()`, `@rpc()` actions, auth checks, caching, redirects, or other server-side behavior. Do not place route HTML in `index.py`; use a lone `index.py` only for non-visual routes such as redirect-only or action-only handlers.
+- When a single route needs to affect a wrapping layout, have `page()` return `(render_page(__file__, page_context), {"dashboard_body_class": ...})` and consume that value as `[[ layout.dashboard_body_class ]]` in `layout.html`. Use `layout.py` when the same prop should apply across a whole subtree.
 - For file uploads and file-manager flows, keep browser interaction in route templates, keep upload and delete `@rpc()` actions in the owning `src/app/**/index.py`, keep shared storage and persistence helpers in `src/lib/**`, store metadata in Prisma, and store browser-accessible blobs under `public/storage/**`.
 - When runtime uploads write into `public/storage/**`, keep `public/storage` in `settings/bs-config.ts` `PUBLIC_IGNORE_DIRS` so `npm run dev` does not reload on each upload.
 - For logout flows, prefer `pp.rpc("signout")` backed by `@rpc(require_auth=True)` from page-level or component-level UI. Use a dedicated signout route only for plain form POST, no-JavaScript fallback, or other full-navigation edge cases.
@@ -41,6 +42,7 @@
 - Treat `pp-component` on routes, layouts, and components, and `type="text/pp"` on owned PulsePoint scripts, as compiler-injected by the Python side; do not add them manually in authored templates unless the task is explicitly about runtime internals.
 - `layout()` is synchronous in the installed runtime. Put async I/O in `page()` or `@rpc()`.
 - Dynamic route params currently reach `page()` as a single positional `dict`, with query params injected by name and `request` injected by keyword when declared.
+- In `layout.py`, return a dict for standard `[[ layout.* ]]` props. Use `render_layout(__file__, {...})` only when that layout should consume direct local variables such as `[[ my_class ]]` instead of `[[ layout.my_class ]]`.
 - Do not assume `StateManager` survives across requests unless `request.state.session` is explicitly bridged from `request.session`.
 - Route, layout, and component HTML templates must keep a single top-level lowercase HTML element so Caspian can inject `pp-component`. Think React-style single parent wrapper: good one root containing the markup and any owned PulsePoint script, bad sibling top-level tags.
 

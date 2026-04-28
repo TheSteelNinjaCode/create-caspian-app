@@ -67,6 +67,7 @@ Important rules:
 - Use PulsePoint as the default reactive frontend layer for app UI.
 - When `caspian.config.json` has `tailwindcss: true`, treat Python `merge_classes(...)` plus browser `twMerge(...)` as the only Tailwind class-merging contract. `merge_classes(...)` emits frontend-ready `{twMerge(...)}` expressions, and authored PulsePoint expressions and scripts may call global `twMerge(...)` directly.
 - For CRUD operations and any browser-initiated reads from the backend, use server `@rpc()` actions and client `pp.rpc(...)` calls unless the user explicitly asks for another integration pattern.
+- When a single route needs to affect a wrapping layout, have `page()` return `(render_page(__file__, page_context), {"dashboard_body_class": ...})` and consume that value as `[[ layout.dashboard_body_class ]]` in `layout.html`. Use `layout.py` when the same prop should apply across an entire subtree.
 - Protect customized `src/lib/auth/auth_config.py` from framework updates by adding `./src/lib/auth/auth_config.py` to `excludeFiles` in `caspian.config.json`.
 - This workspace already has an app-owned Python database layer in `src/lib/prisma/`.
 - Do not assume `src/lib/mcp/**`, `settings/restart-mcp.ts`, or MCP-related scripts exist unless `caspian.config.json` confirms MCP is enabled and the update workflow has run.
@@ -89,6 +90,7 @@ Important rules:
 - In the current router inside `main.py`, path params are passed to `page()` as the first positional `dict` argument.
 - Matching query params can still be injected by name, and `request` is injected by keyword when declared.
 - The installed `casp.layout` runtime calls `layout()` synchronously. Keep async I/O in `page()` or `@rpc()`.
+- In `layout.py`, return a dict for standard `[[ layout.* ]]` props. Use `render_layout(__file__, {...})` only when that layout should consume direct local variables such as `[[ my_class ]]` instead of `[[ layout.my_class ]]`.
 - `StateManager` reads and writes `request.state.session`, but the current middleware stack in `main.py` does not mirror `request.session` into `request.state.session`.
 - Do not assume `StateManager` persistence survives across requests until that bridge exists.
 - Route HTML caching uses `caches/` and `caches/cache_manifest.json` through `casp.cache_handler`.
@@ -120,6 +122,7 @@ Use this map before making changes.
 - Keep reusable application UI components in `src/components/**`.
 - Keep route-specific logic in `src/app/**`.
 - For route creation, keep page markup in `src/app/**/index.html`. If a route is UI-only, `index.html` alone is sufficient. Add `src/app/**/index.py` only as a companion when the same route needs metadata, `page()`, `@rpc()` actions, auth checks, caching, redirects, or other server-side behavior. Do not place route HTML in `index.py`; use a lone `index.py` only for non-visual routes such as redirect-only or action-only handlers.
+- If a single route only needs to tweak a parent layout, return `(render_page(__file__, ...), {"dashboard_body_class": ...})` from `page()` instead of introducing one-off global state or moving route HTML into `index.py`.
 - For file-manager work, keep route-owned upload and delete `@rpc()` actions in `src/app/**/index.py`, keep shared storage and Prisma helper logic in `src/lib/**`, and keep uploaded public blobs under `public/storage/**`.
 - When deciding between `src/components/**` and `src/lib/**`, put reusable rendered UI in `src/components/**` and put services, validators, adapters, database helpers, and other non-UI support code in `src/lib/**`.
 - Read `caspian.config.json` before deciding whether a Caspian feature should be used, documented, scaffolded, or avoided in the current workspace.
