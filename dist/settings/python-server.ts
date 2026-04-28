@@ -53,7 +53,7 @@ export function waitForPort(port: number, timeout = 10000): Promise<boolean> {
 
 export function waitForPortRelease(
   port: number,
-  timeout = 5000
+  timeout = 5000,
 ): Promise<boolean> {
   const start = Date.now();
   return new Promise((resolve) => {
@@ -114,29 +114,44 @@ async function killProcessTree(child: ChildProcess): Promise<void> {
   }
 }
 
-function spawnPython(port: number): ChildProcess {
+function spawnPython(port: number, browserSyncPort?: number): ChildProcess {
   const pythonPath = getVenvPythonPath();
   const args = ["-u", "main.py"];
 
   console.log(`→ Starting Python server on port ${port}...`);
 
+  const env = {
+    ...process.env,
+    PYTHONUNBUFFERED: "1",
+    PORT: String(port),
+    ...(browserSyncPort
+      ? { CASPIAN_BROWSER_SYNC_PORT: String(browserSyncPort) }
+      : {}),
+  };
+
   const child = spawn(pythonPath, args, {
     stdio: "inherit",
     shell: false,
     detached: !isWindows(),
-    env: { ...process.env, PYTHONUNBUFFERED: "1", PORT: String(port) },
+    env,
   });
 
   child.on("error", (err) => console.error("Failed to start Python:", err));
   return child;
 }
 
-export function startPythonServer(port: number): void {
+export function startPythonServer(
+  port: number,
+  browserSyncPort?: number,
+): void {
   if (pythonProcess && pythonProcess.exitCode === null) return;
-  pythonProcess = spawnPython(port);
+  pythonProcess = spawnPython(port, browserSyncPort);
 }
 
-export async function restartPythonServer(port: number): Promise<void> {
+export async function restartPythonServer(
+  port: number,
+  browserSyncPort?: number,
+): Promise<void> {
   if (isRestarting) return;
   isRestarting = true;
 
@@ -150,7 +165,7 @@ export async function restartPythonServer(port: number): Promise<void> {
       await waitForPortRelease(port);
     }
 
-    pythonProcess = spawnPython(port);
+    pythonProcess = spawnPython(port, browserSyncPort);
   } finally {
     isRestarting = false;
   }

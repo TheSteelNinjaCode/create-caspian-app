@@ -6,6 +6,7 @@ import importlib.util
 import mimetypes
 import secrets
 import traceback
+import json
 from pathlib import Path
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse
@@ -35,7 +36,6 @@ from casp.layout import (
 import hashlib
 from casp.streaming import SSE
 from typing import Any, Optional, get_args, get_origin, Union
-import re
 from src.lib.auth.auth_config import build_auth_settings
 
 load_dotenv()
@@ -69,6 +69,37 @@ MAX_CONTENT_LENGTH_MB = int(os.getenv('MAX_CONTENT_LENGTH_MB', 16))
 IS_PRODUCTION = os.getenv('APP_ENV') == 'production'
 CACHE_ENABLED = os.getenv('CACHE_ENABLED', 'false').lower() == 'true'
 DEFAULT_TTL = int(os.getenv('CACHE_TTL', 600))
+
+
+def _dev_cookie_scope() -> str:
+    if IS_PRODUCTION:
+        return ""
+
+    scope = os.getenv("CASPIAN_BROWSER_SYNC_PORT")
+    if not scope:
+        bs_config_path = Path("settings/bs-config.json")
+        if bs_config_path.exists():
+            try:
+                local_url = json.loads(
+                    bs_config_path.read_text(encoding="utf-8")
+                ).get("local", "")
+                scope = local_url.rsplit(":", 1)[-1].strip("/")
+            except (OSError, json.JSONDecodeError):
+                scope = ""
+
+    scope = scope or os.getenv("PORT", "")
+    return scope if scope.isdigit() else ""
+
+
+def _scoped_cookie_name(base_name: str) -> str:
+    scope = _dev_cookie_scope()
+    return f"{base_name}_{scope}" if scope else base_name
+
+
+CSRF_COOKIE_NAME = _scoped_cookie_name("pp_csrf")
+SESSION_COOKIE_NAME = _scoped_cookie_name(
+    os.getenv('AUTH_COOKIE_NAME', 'session')
+)
 
 # ====
 # Static File Routes
@@ -129,7 +160,7 @@ class CSRFMiddleware:
 
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
-                cookie_value = f"pp_csrf={csrf_token}; Path=/; SameSite=Lax"
+                cookie_value = f"{CSRF_COOKIE_NAME}={csrf_token}; Path=/; SameSite=Lax"
                 if IS_PRODUCTION:
                     cookie_value += "; Secure"
                 new_headers = list(message.get("headers", []))
@@ -159,7 +190,7 @@ class AuthMiddleware:
         providers = Auth.get_providers()
 
         if providers:
-            oauth_response = auth_inst.auth_providers(*providers)
+            oauth_response = await auth_inst.auth_providers(*providers)
             if oauth_response:
                 await oauth_response(scope, receive, send)
                 return
@@ -217,38 +248,42 @@ class RPCMiddleware:
 # Route Registration
 # ====
 
-
-_VOID_TAGS_PATTERN = r"(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)"
-_VOID_END_TAG_RE = re.compile(rf"</\s*{_VOID_TAGS_PATTERN}\s*>", re.IGNORECASE)
-_VOID_OPEN_TAG_RE = re.compile(
-    rf"<\s*({_VOID_TAGS_PATTERN})(\b[^>]*)>", re.IGNORECASE)
-
-
-def normalize_void_tags(html: str) -> str:
-    html = _VOID_END_TAG_RE.sub("", html)
-
-    def _open_repl(m: re.Match) -> str:
-        tag = m.group(1)
-        attrs = m.group(2) or ""
-        full = m.group(0)
-        if full.rstrip().endswith("/>"):
-            return full
-        if attrs and not attrs.startswith(" "):
-            attrs = " " + attrs
-        return f"<{tag}{attrs} />"
-
-    return _VOID_OPEN_TAG_RE.sub(_open_repl, html)
+_route_module_cache = {}
+_route_signature_cache = {}
 
 
 def load_route_module(file_path: str):
-    unique_id = hashlib.md5(file_path.encode()).hexdigest()[:8]
+    abs_path = os.path.abspath(file_path)
+    try:
+        mtime_ns = os.stat(abs_path).st_mtime_ns
+    except OSError:
+        raise FileNotFoundError(f"Route module not found: {abs_path}")
+
+    cached = _route_module_cache.get(abs_path)
+    if cached is not None and cached[0] == mtime_ns:
+        return cached[1]
+
+    unique_id = hashlib.md5(abs_path.encode()).hexdigest()[:8]
     module_name = f"page_{unique_id}"
-    spec = importlib.util.spec_from_file_location(module_name, file_path)
+    spec = importlib.util.spec_from_file_location(module_name, abs_path)
     assert spec is not None and spec.loader is not None, f"Cannot load spec for {file_path}"
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     setattr(module, 'render_page', render_page)
+    _route_module_cache[abs_path] = (mtime_ns, module)
+    _route_signature_cache.pop(abs_path, None)
     return module
+
+
+def get_page_signature(file_path: str, page_func):
+    abs_path = os.path.abspath(file_path)
+    cached = _route_signature_cache.get(abs_path)
+    if cached is not None and cached[0] is page_func:
+        return cached[1]
+
+    sig = inspect.signature(page_func)
+    _route_signature_cache[abs_path] = (page_func, sig)
+    return sig
 
 
 def _unwrap_optional(annotation: Any) -> Any:
@@ -338,7 +373,7 @@ def register_single_route(url_pattern: str, file_path: str):
         current_uri = request.url.path
 
         # 1. Cache Check (Fast Path)
-        if request.method == 'GET':
+        if CACHE_ENABLED and request.method == 'GET':
             cached_resp = CacheHandler.serve_cache(current_uri, DEFAULT_TTL)
             if cached_resp:
                 return HTMLResponse(content=cached_resp)
@@ -356,7 +391,7 @@ def register_single_route(url_pattern: str, file_path: str):
             if not hasattr(module, 'page'):
                 raise AttributeError(f"Missing 'def page():' in {file_path}")
 
-            sig = inspect.signature(module.page)
+            sig = get_page_signature(file_path, module.page)
             call_kwargs = {}
             call_args = []
 
@@ -434,7 +469,6 @@ def register_single_route(url_pattern: str, file_path: str):
         )
 
         html_output = transform_scripts(html_output)
-        html_output = normalize_void_tags(html_output)
         response = HTMLResponse(content=html_output)
         response.headers['X-PP-Root-Layout'] = root_layout_id
 
@@ -540,7 +574,7 @@ app.add_middleware(CSRFMiddleware)
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.getenv('AUTH_SECRET', 'change-me'),
-    session_cookie=os.getenv('AUTH_COOKIE_NAME', 'session'),
+    session_cookie=SESSION_COOKIE_NAME,
     max_age=SESSION_LIFETIME_HOURS * 3600,
     same_site='lax',
     https_only=IS_PRODUCTION,

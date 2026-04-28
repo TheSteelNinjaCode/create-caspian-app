@@ -165,7 +165,7 @@ const pipeline = new DebouncedWorker(
       !changedFile.includes("__pycache__");
 
     if (needsPythonRestart) {
-      await restartPythonServer(pythonPort);
+      await restartPythonServer(pythonPort, bsPort);
       updateRouteFilesCache();
 
       const isReady = await waitForPort(pythonPort);
@@ -201,7 +201,7 @@ const pipeline = new DebouncedWorker(
             "→ Structure changed (New/Deleted file), restarting Python server...",
           ),
         );
-        await restartPythonServer(pythonPort);
+        await restartPythonServer(pythonPort, bsPort);
         const isReady = await waitForPort(pythonPort);
         if (isReady && bs.active) bs.reload();
       } else if (bs.active) {
@@ -295,7 +295,7 @@ const publicPipeline = new DebouncedWorker(
   createSrcWatcher(join(__dirname, "..", "utils", "**", "*.py"), {
     onEvent: async (_ev, _abs, _) => {
       if (_abs.includes("__pycache__")) return;
-      await restartPythonServer(pythonPort);
+      await restartPythonServer(pythonPort, bsPort);
       const isReady = await waitForPort(pythonPort);
       if (isReady && bs.active) bs.reload();
     },
@@ -308,7 +308,7 @@ const publicPipeline = new DebouncedWorker(
   createSrcWatcher(join(__dirname, "..", "main.py"), {
     onEvent: async (_ev, _abs, _) => {
       if (_abs.includes("__pycache__")) return;
-      await restartPythonServer(pythonPort);
+      await restartPythonServer(pythonPort, bsPort);
       const isReady = await waitForPort(pythonPort);
       if (isReady && bs.active) bs.reload();
     },
@@ -318,7 +318,7 @@ const publicPipeline = new DebouncedWorker(
     interval: 1000,
   });
 
-  startPythonServer(pythonPort);
+  startPythonServer(pythonPort, bsPort);
 
   bs.init(
     {
