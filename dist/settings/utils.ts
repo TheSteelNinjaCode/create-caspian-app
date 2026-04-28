@@ -1,8 +1,7 @@
 import { fileURLToPath } from "url";
-import { dirname } from "path";
+import { dirname, extname, relative } from "path";
 import chokidar, { FSWatcher } from "chokidar";
 import { spawn, ChildProcess, execFile } from "child_process";
-import { relative } from "path";
 
 export const PUBLIC_DIR = "public";
 export const SRC_DIR = "src";
@@ -30,6 +29,24 @@ export const DEFAULT_IGNORES: (string | RegExp)[] = [
 
 export const DEFAULT_AWF = { stabilityThreshold: 300, pollInterval: 100 };
 
+function hasGlobPattern(value: string): boolean {
+  return /[*{[]/.test(value);
+}
+
+function getWatchBase(root: string): string {
+  if (hasGlobPattern(root)) {
+    const globIndex = root.search(/[*{[]/);
+    const prefix = root.slice(0, globIndex).replace(/[\\/]+$/, "");
+    return prefix || ".";
+  }
+
+  return extname(root) ? dirname(root) : root;
+}
+
+function formatWatchTarget(root: string): string {
+  return root.replace(/\\/g, "/");
+}
+
 export function createSrcWatcher(
   root: string,
   opts: {
@@ -50,6 +67,7 @@ export function createSrcWatcher(
     logPrefix = "watch",
     usePolling = true,
   } = opts;
+  const watchBase = getWatchBase(root);
 
   const watcher = chokidar.watch(root, {
     ignoreInitial: true,
@@ -62,14 +80,14 @@ export function createSrcWatcher(
 
   watcher
     .on("ready", () => {
-      console.log(`[${logPrefix}] Watching ${root.replace(/\\/g, "/")}/**/*`);
+      console.log(`[${logPrefix}] Watching ${formatWatchTarget(root)}`);
     })
     .on("all", (event: WatchEvent, filePath: string) => {
       if (exts && exts.length > 0) {
         const ok = exts.some((ext) => filePath.endsWith(ext));
         if (!ok) return;
       }
-      const rel = relative(root, filePath).replace(/\\/g, "/");
+      const rel = relative(watchBase, filePath).replace(/\\/g, "/");
       if (event === "add" || event === "change" || event === "unlink") {
         onEvent(event, filePath, rel);
       }

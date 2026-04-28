@@ -21,6 +21,7 @@ const { __dirname } = getFileMeta();
 const bs: BrowserSyncInstance = browserSync.create();
 
 const WORKSPACE_ROOT = join(__dirname, "..");
+const PUBLIC_ROOT = join(WORKSPACE_ROOT, PUBLIC_DIR);
 const PUBLIC_IGNORE_DIRS = ["uploads"];
 let previousRouteFiles: string[] = [];
 let lastChangedFile: string | null = null;
@@ -228,7 +229,7 @@ function updateRouteFilesCache() {
 }
 
 function isIgnoredPublicPath(absPath: string): boolean {
-  const normalizedPath = relative(WORKSPACE_ROOT, absPath).replace(/\\/g, "/");
+  const normalizedPath = relative(PUBLIC_ROOT, absPath).replace(/\\/g, "/");
 
   return PUBLIC_IGNORE_DIRS.some(
     (dir) => normalizedPath === dir || normalizedPath.startsWith(`${dir}/`),
@@ -266,7 +267,7 @@ const publicPipeline = new DebouncedWorker(
 
   createSrcWatcher(join(PUBLIC_DIR, "**", "*"), {
     onEvent: (_ev, abs, _) => {
-      const relFromPublic = relative(PUBLIC_DIR, abs);
+      const relFromPublic = relative(PUBLIC_ROOT, abs).replace(/\\/g, "/");
       if (isIgnoredPublicPath(abs)) return;
       publicPipeline.schedule(relFromPublic);
     },
