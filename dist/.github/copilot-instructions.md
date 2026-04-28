@@ -30,6 +30,7 @@
 - In all-private mode, keep public exceptions in `public_routes`; the runtime defaults keep `/` public and keep `auth_routes=["/signin", "/signup"]` public.
 - Do not treat `token_auto_refresh` as the switch that makes routes private. In the current app it only affects sliding-session refresh if `auth.refresh_session()` is called.
 - Use PulsePoint as the default reactive frontend layer unless the user requests another stack.
+- Treat Caspian component usage as HTML-first in the current runtime: import Python components with `<!-- @import ... -->` and render them as kebab-cased `x-*` tags such as `<x-button />` or `<x-command-dialog />`.
 - For CRUD operations and any browser-initiated reads from the backend, use route or backend `@rpc()` actions on the server and `pp.rpc(...)` from PulsePoint code on the client unless the user explicitly asks for another integration pattern.
 - For route creation, keep page markup in `src/app/**/index.html`. If a route is UI-only, `index.html` alone is sufficient. Add `src/app/**/index.py` only as a companion when the same route needs metadata, `page()`, `@rpc()` actions, auth checks, caching, redirects, or other server-side behavior. Do not place route HTML in `index.py`; use a lone `index.py` only for non-visual routes such as redirect-only or action-only handlers.
 - For file uploads and file-manager flows, keep browser interaction in route templates, keep upload and delete `@rpc()` actions in the owning `src/app/**/index.py`, keep shared storage and persistence helpers in `src/lib/**`, store metadata in Prisma, and store browser-accessible blobs under `public/storage/**`.
@@ -90,13 +91,14 @@
 
 - Keep route templates and layouts server-rendered first, with PulsePoint enhancement as the default interactive layer.
 - When a route renders UI, author that markup in the route's `index.html` even if the route also has an `index.py` companion.
+- When route templates import reusable Python components, render them as kebab-cased `x-*` tags such as `<x-button />` after a top-level `<!-- @import Button from "..." -->` directive.
 - For route-level reactivity, prefer PulsePoint state, effects, refs, and template directives together with `pp.rpc(...)` instead of manual DOM mutation or ad hoc browser fetch code.
 - Preserve Caspian template syntax such as `[[...]]` in layouts and `pp-*` runtime attributes in rendered HTML.
 - Do not author `pp-component="..."` manually in route or layout templates; the Python render pipeline injects it onto the single root element.
 - Do not author `type="text/pp"` manually in route or layout templates either. Use plain `<script>` in source and let the render path rewrite it.
 - Keep authored route and layout templates to one top-level lowercase HTML root element, the same constraint used for component templates. If a script is needed, keep it inside that root instead of as a sibling top-level node.
 - For upload managers and similar interactive lists, prefer `pp.state(...)` plus `pp-for` over manual DOM painting so rerenders keep the list stable.
-- Do not assume React, Vue, JSX, HTMX, or another frontend runtime unless the user explicitly requests one.
+- Do not assume React, Vue, JSX-first component syntax, HTMX, or another frontend runtime unless the user explicitly requests one.
 
 ### `prisma/**`
 

@@ -77,6 +77,7 @@ Important rules:
 - `caspian.config.json` is the first config file to check for enabled workspace features. Read the actual values instead of inferring them from the docs.
 - As the app grows, prefer `src/components/` for reusable rendered UI and `src/lib/` for reusable non-UI support code.
 - PulsePoint runtime code is shipped in `public/js/pp-reactive-v2.js` and loaded from `public/js/main.js`.
+- Treat imported Python components as HTML-first `x-*` tags in authored templates, such as `<x-button />` or `<x-command-dialog />`.
 - `pp-component` is injected by the Python render pipeline onto page, layout, and component roots; authored route and component templates should not add it manually.
 - `main.py` runs `transform_scripts(...)`, so authored body `<script>` tags are rewritten to `<script type="text/pp">` in rendered HTML; route, layout, and component templates should write plain `<script>` in source.
 - Route and component HTML templates must keep exactly one top-level lowercase HTML element so Caspian can inject `pp-component`. Think React-style single parent wrapper: good `<div>...</div>` with any owned script inside that same root, bad sibling top-level tags such as `<div>...</div><script ...></script>`.
@@ -139,6 +140,7 @@ Use this map before making changes.
 - For logout flows, prefer `pp.rpc("signout")` plus `@rpc(require_auth=True)` in page or component UI. Only scaffold a signout route for no-JavaScript, form-post, or full-navigation edge cases.
 - When MCP is enabled, keep the app-owned FastMCP server in `src/lib/mcp/mcp_server.py` and the default config in `src/lib/mcp/fastmcp.json`. If those paths move, update `settings/restart-mcp.ts` and the MCP docs together.
 - Use PulsePoint as the default reactive frontend and browser-side UI layer unless the user explicitly wants another stack.
+- When HTML templates import reusable Python components, render them as kebab-cased `x-*` tags after a top-level `<!-- @import ... -->` directive.
 - For CRUD operations and any browser-initiated reads from the backend, use `@rpc()` plus `pp.rpc(...)` as the default contract instead of ad hoc fetch or parallel REST endpoints unless the user explicitly asks for them.
 - Treat `pp-component` as a framework-owned attribute on authored templates. Document it, but do not manually add it in normal route or component HTML.
 - Treat `type="text/pp"` on PulsePoint scripts as a render-time attribute too. In authored route, layout, and component HTML, write plain `<script>` and let Caspian rewrite it.
