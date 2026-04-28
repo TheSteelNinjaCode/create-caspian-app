@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, statSync, writeFileSync } from "fs";
 import { join, sep, relative } from "path";
 import { getFileMeta } from "./utils.js";
-import { PUBLIC_DIR, APP_DIR } from "../settings/utils.js";
+import { PUBLIC_DIR, APP_DIR } from "./utils.js";
 
 const { __dirname } = getFileMeta();
 
