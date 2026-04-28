@@ -12,12 +12,12 @@ const configFilePath = join(currentProjectRoot, "caspian.config.json");
 function updateProjectNameInConfig(
   filePath: string,
   newProjectName: string,
-  currentRoot: string
+  currentRoot: string,
 ): void {
   const newWebPath = calculateDynamicWebPath(
     currentRoot,
     caspianConfigJson.projectRootPath,
-    caspianConfigJson.bsPathRewrite?.["^/"]
+    caspianConfigJson.bsPathRewrite?.["^/"],
   );
 
   caspianConfigJson.projectName = newProjectName;
@@ -39,16 +39,16 @@ function updateProjectNameInConfig(
         return;
       }
       console.log(
-        `Configuration updated.\nProject: ${newProjectName}\nURL: http://localhost${newWebPath}`
+        `Configuration updated.\nProject: ${newProjectName}\nURL: http://localhost${newWebPath}`,
       );
-    }
+    },
   );
 }
 
 function calculateDynamicWebPath(
   currentPath: string,
   oldPath?: string,
-  oldUrl?: string
+  oldUrl?: string,
 ): string {
   let webRoot: string | null = null;
 
@@ -76,7 +76,7 @@ function calculateDynamicWebPath(
 updateProjectNameInConfig(configFilePath, newProjectName, currentProjectRoot);
 
 export const deleteFilesIfExist = async (
-  filePaths: string[]
+  filePaths: string[],
 ): Promise<void> => {
   for (const filePath of filePaths) {
     try {
@@ -90,7 +90,7 @@ export const deleteFilesIfExist = async (
 };
 
 export async function deleteDirectoriesIfExist(
-  dirPaths: string[]
+  dirPaths: string[],
 ): Promise<void> {
   for (const dirPath of dirPaths) {
     try {

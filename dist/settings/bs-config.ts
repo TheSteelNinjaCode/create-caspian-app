@@ -21,7 +21,7 @@ const { __dirname } = getFileMeta();
 const bs: BrowserSyncInstance = browserSync.create();
 
 const WORKSPACE_ROOT = join(__dirname, "..");
-const PUBLIC_IGNORE_DIRS = [""];
+const PUBLIC_IGNORE_DIRS = ["uploads"];
 let previousRouteFiles: string[] = [];
 let lastChangedFile: string | null = null;
 
@@ -93,11 +93,9 @@ function hasLoopbackListener(port: number): Promise<boolean> {
 
 async function hasWindowsTcpListener(port: number): Promise<boolean> {
   try {
-    const { stdout } = await execFileAsync(
-      "netstat",
-      ["-ano", "-p", "TCP"],
-      { windowsHide: true },
-    );
+    const { stdout } = await execFileAsync("netstat", ["-ano", "-p", "TCP"], {
+      windowsHide: true,
+    });
 
     return stdout.split(/\r?\n/).some((line) => {
       const parts = line.trim().split(/\s+/);
