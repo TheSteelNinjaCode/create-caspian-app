@@ -30,6 +30,7 @@
 - In all-private mode, keep public exceptions in `public_routes`; the runtime defaults keep `/` public and keep `auth_routes=["/signin", "/signup"]` public.
 - Do not treat `token_auto_refresh` as the switch that makes routes private. In the current app it only affects sliding-session refresh if `auth.refresh_session()` is called.
 - Use PulsePoint as the default reactive frontend layer unless the user requests another stack.
+- When `caspian.config.json` has `tailwindcss: true`, treat Python `merge_classes(...)` plus browser `twMerge(...)` as the only Tailwind class-merging contract: `merge_classes(...)` emits frontend-ready `{twMerge(...)}` expressions, and authored PulsePoint attribute expressions or scripts may call global `twMerge(...)` directly.
 - Treat Caspian component usage as HTML-first in the current runtime: import Python components with `<!-- @import ... -->` and render them as kebab-cased `x-*` tags such as `<x-button />` or `<x-command-dialog />`.
 - For CRUD operations and any browser-initiated reads from the backend, use route or backend `@rpc()` actions on the server and `pp.rpc(...)` from PulsePoint code on the client unless the user explicitly asks for another integration pattern.
 - For route creation, keep page markup in `src/app/**/index.html`. If a route is UI-only, `index.html` alone is sufficient. Add `src/app/**/index.py` only as a companion when the same route needs metadata, `page()`, `@rpc()` actions, auth checks, caching, redirects, or other server-side behavior. Do not place route HTML in `index.py`; use a lone `index.py` only for non-visual routes such as redirect-only or action-only handlers.
@@ -133,4 +134,5 @@
   3.  the markdown file being edited
 - Do not encode the current project's feature flags, file inventory, script list, or temporary status inside the packaged docs. Keep those facts in `.github/copilot-instructions.md`, `AGENTS.md`, or the project code.
 - When an optional feature doc is edited, phrase it as feature guidance, for example `when caspian.config.json has mcp: true`, instead of as a project snapshot such as `this workspace has mcp: false`.
+- When `caspian.config.json` has `tailwindcss: true`, document the current Tailwind flow as a full replacement: Python `merge_classes(...)` builds frontend `{twMerge(...)}` expressions and browser-side `twMerge(...)` resolves conflicts.
 - Keep `index.md` discoverable as the manifest, keep cross-links aligned, and make each feature page explicit about when it applies and what file AI should inspect next.

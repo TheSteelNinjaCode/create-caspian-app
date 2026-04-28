@@ -65,6 +65,7 @@ Important rules:
 - `token_auto_refresh` does not make routes private in the current app; it only affects sliding-session refresh if `auth.refresh_session()` is called.
 - Prefer logout via auth-protected RPC from page-level or component-level UI: `pp.rpc("signout")` backed by `@rpc(require_auth=True)`. Use a dedicated signout route only for plain form POST or no-JavaScript edge cases.
 - Use PulsePoint as the default reactive frontend layer for app UI.
+- When `caspian.config.json` has `tailwindcss: true`, treat Python `merge_classes(...)` plus browser `twMerge(...)` as the only Tailwind class-merging contract. `merge_classes(...)` emits frontend-ready `{twMerge(...)}` expressions, and authored PulsePoint expressions and scripts may call global `twMerge(...)` directly.
 - For CRUD operations and any browser-initiated reads from the backend, use server `@rpc()` actions and client `pp.rpc(...)` calls unless the user explicitly asks for another integration pattern.
 - Protect customized `src/lib/auth/auth_config.py` from framework updates by adding `./src/lib/auth/auth_config.py` to `excludeFiles` in `caspian.config.json`.
 - This workspace already has an app-owned Python database layer in `src/lib/prisma/`.
@@ -160,6 +161,7 @@ Use this map before making changes.
 - Do not record this project's current feature flags, script inventory, or temporary file tree status inside the packaged docs.
 - Gate optional docs with `caspian.config.json`. Use phrasing such as `when caspian.config.json enables MCP` instead of `this workspace has mcp: false`.
 - Use the packaged docs to make AI aware of what Caspian can do, when a doc applies, and which project files should be inspected next.
+- When `caspian.config.json` has `tailwindcss: true`, document Tailwind class handling as the current contract: Python `merge_classes(...)` emits frontend `{twMerge(...)}` expressions and browser `twMerge(...)` resolves conflicts.
 - Keep repo-specific clarifications in this file or `.github/copilot-instructions.md` rather than embedding them in the packaged docs unless the behavior is truly framework-wide.
 - Keep `index.md` and cross-links aligned so AI can discover the right task doc quickly.
 - Continue validating `routing.md`, `components.md`, `auth.md`, `fetch-data.md`, `cache.md`, `pulsepoint.md`, `validation.md`, `database.md`, and `mcp.md` against the installed `casp` runtime before changing behavior claims.
