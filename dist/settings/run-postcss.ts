@@ -6,7 +6,7 @@ import process from "node:process";
 
 const mode: "watch" | "build" =
   process.argv[2] === "watch" ? "watch" : "build";
-const watcherPidFile = join(process.cwd(), ".pp", "postcss-watch.pid");
+const watcherPidFile = join(process.cwd(), ".casp", "postcss-watch.pid");
 const mkdirAsync = promisify(mkdir);
 const readFileAsync = promisify(readFile);
 const rmAsync = promisify(rm);
