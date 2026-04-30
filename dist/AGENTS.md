@@ -64,10 +64,13 @@ Use `.github/copilot-instructions.md` for the repo-wide implementation rules. Th
 - Workspace file instructions live under `.github/instructions/**/*.instructions.md` when the repo needs task- or library-specific AI guidance that should not be always-on.
 - Use `node_modules/caspian-utils/dist/docs/core-runtime-map.md` when a behavior is controlled by `main.py` or `.venv/Lib/site-packages/casp/**` and the owning file is not obvious yet.
 - Before updating docs, verify runtime-specific claims such as middleware order, route param injection, `layout()` sync behavior, and `StateManager` persistence against the current `main.py` and installed `casp` package rather than copying older notes.
+- When generating or reviewing `src/app/**/index.html`, `src/app/**/layout.html`, or component HTML templates, treat the single-root rule as a hard requirement: exactly one authored top-level parent element or one imported `x-*` root, with any owned `<script>` kept inside that same root. Do not allow sibling top-level tags, sibling scripts, or stray top-level text, because Caspian injects `pp-component` on that final root and errors if it cannot.
 
 ## Task Routing
 
 Use this map before making changes.
+
+If the task generates or edits route, layout, or component HTML templates, check `routing.md`, `components.md`, and `pulsepoint.md` before writing markup. Enforce the single-root contract there: one authored root only, any owned `<script>` inside that root, and no sibling top-level nodes.
 
 | Task area                                 | Read first                                                                                                   | Verify against                                                                   |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
