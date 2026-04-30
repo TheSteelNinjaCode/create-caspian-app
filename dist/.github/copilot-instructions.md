@@ -3,6 +3,12 @@
 - Read `AGENTS.md` before working in `main.py`, `src/lib/**`, `.venv/Lib/site-packages/casp/**`, `public/js/**`, `prisma/**`, or `node_modules/caspian-utils/dist/docs/**`.
 - Keep repo-wide always-on Copilot guidance in this file. Use `.github/instructions/**/*.instructions.md` for narrower task-, file-, library-, or implementation-specific guidance when that extra context should not load on every request.
 
+## Document Ownership
+
+- This file owns repo-wide always-on rules for the workspace.
+- `AGENTS.md` should focus on task routing, runtime cross-checking, and packaged-doc maintenance rather than repeating full rule blocks from this file.
+- When packaged docs need to point AI from a feature guide to the controlling runtime file, prefer `node_modules/caspian-utils/dist/docs/core-runtime-map.md` instead of duplicating the full module map in multiple pages.
+
 ## Global Rules
 
 - Use this decision order: `caspian.config.json` for optional feature enablement, app runtime and app-owned code for current project behavior, matching workspace instruction files under `.github/instructions/**/*.instructions.md` for task-specific implementation guidance, installed `casp` runtime for framework internals, and packaged markdown docs for Caspian feature discovery and task routing.
@@ -33,7 +39,8 @@
 - When `caspian.config.json` has `tailwindcss: true`, treat Python `merge_classes(...)` plus browser `twMerge(...)` as the only Tailwind class-merging contract: `merge_classes(...)` emits frontend-ready `{twMerge(...)}` expressions, and authored PulsePoint attribute expressions or scripts may call global `twMerge(...)` directly.
 - Treat Caspian component usage as HTML-first in the current runtime: import Python components with `<!-- @import ... -->` and render them as kebab-cased `x-*` tags such as `<x-button />` or `<x-command-dialog />`.
 - For CRUD operations and any browser-initiated reads from the backend, use route or backend `@rpc()` actions on the server and `pp.rpc(...)` from PulsePoint code on the client unless the user explicitly asks for another integration pattern.
-- For route creation, keep page markup in `src/app/**/index.html`. If a route is UI-only, `index.html` alone is sufficient. Add `src/app/**/index.py` only as a companion when the same route needs metadata, `page()`, `@rpc()` actions, auth checks, caching, redirects, or other server-side behavior. Do not place route HTML in `index.py`; use a lone `index.py` only for non-visual routes such as redirect-only or action-only handlers.
+- For route creation, keep page markup in `src/app/**/index.html`. If a route is UI-only, `index.html` alone is sufficient. Add `src/app/**/index.py` only as a companion when the same route needs metadata, `page()`, `@rpc()` actions, auth checks, caching, redirects, or other server-side behavior. Keep shared section wrappers in `layout.html` and use `layout.py` only for shared synchronous props or metadata. Do not place route HTML in `index.py` or layout HTML in `layout.py`; use a lone `index.py` only for non-visual routes such as redirect-only or action-only handlers.
+- When the user asks for a dashboard, admin area, account area, or any grouped child-route section, follow the same mental model as the Next.js App Router: create a parent folder with `layout.html`, add `layout.py` only when that section needs shared synchronous props or metadata, and place the child routes beneath it. Use a normal folder such as `dashboard/` when the segment should appear in the URL, and use `(group)/` only when it should not.
 - When a single route needs to affect a wrapping layout, have `page()` return `(render_page(__file__, page_context), {"dashboard_body_class": ...})` and consume that value as `[[ layout.dashboard_body_class ]]` in `layout.html`. Use `layout.py` when the same prop should apply across a whole subtree.
 - For file uploads and file-manager flows, keep browser interaction in route templates, keep upload and delete `@rpc()` actions in the owning `src/app/**/index.py`, keep shared storage and persistence helpers in `src/lib/**`, store metadata in Prisma, and store browser-accessible blobs under `public/uploads/**` when the files should be served directly.
 - Local upload helpers should create `public/uploads` on demand when it does not exist yet; do not assume the folder is committed ahead of time.
@@ -45,7 +52,7 @@
 - Dynamic route params currently reach `page()` as a single positional `dict`, with query params injected by name and `request` injected by keyword when declared.
 - In `layout.py`, return a dict for standard `[[ layout.* ]]` props. Use `render_layout(__file__, {...})` only when that layout should consume direct local variables such as `[[ my_class ]]` instead of `[[ layout.my_class ]]`.
 - Do not assume `StateManager` survives across requests unless `request.state.session` is explicitly bridged from `request.session`.
-- Route, layout, and component HTML templates must keep a single top-level lowercase HTML element so Caspian can inject `pp-component`. Think React-style single parent wrapper: good one root containing the markup and any owned PulsePoint script, bad sibling top-level tags.
+- Route, layout, and component HTML templates must keep exactly one authored top-level parent node so Caspian can inject `pp-component` after component expansion. In source, that parent may be a native HTML element or a single imported `x-*` component tag, but it must resolve to one final HTML root. Keep any owned PulsePoint script inside that same parent, and keep top-of-file `<!-- @import ... -->` directives above it.
 
 ## BrowserSync URL Source Of Truth
 
@@ -94,13 +101,15 @@
 ### `src/app/**/*.html`
 
 - Keep route templates and layouts server-rendered first, with PulsePoint enhancement as the default interactive layer.
+- Keep visible page and layout markup in `index.html` and `layout.html`. Treat `index.py` and `layout.py` as backend companions for metadata, `page()` or `layout()`, `@rpc()` actions, auth checks, caching, redirects, and other server-side preparation, not as places to author visible HTML.
 - When a route renders UI, author that markup in the route's `index.html` even if the route also has an `index.py` companion.
 - When route templates import reusable Python components, render them as kebab-cased `x-*` tags such as `<x-button />` after a top-level `<!-- @import Button from "..." -->` directive.
 - For route-level reactivity, prefer PulsePoint state, effects, refs, and template directives together with `pp.rpc(...)` instead of manual DOM mutation or ad hoc browser fetch code.
 - Preserve Caspian template syntax such as `[[...]]` in layouts and `pp-*` runtime attributes in rendered HTML.
 - Do not author `pp-component="..."` manually in route or layout templates; the Python render pipeline injects it onto the single root element.
 - Do not author `type="text/pp"` manually in route or layout templates either. Use plain `<script>` in source and let the render path rewrite it.
-- Keep authored route and layout templates to one top-level lowercase HTML root element, the same constraint used for component templates. If a script is needed, keep it inside that root instead of as a sibling top-level node.
+- Keep authored route and layout templates to exactly one top-level parent node, the same constraint used for component templates. In source, that parent may be a native HTML element or a single imported `x-*` component tag. If a script is needed, keep it inside that parent instead of as a sibling top-level node.
+- For dashboard, admin, or grouped sections with multiple child routes, prefer folder-level `layout.html` wrappers in `src/app/**` instead of repeating the same shell in each child route.
 - For upload managers and similar interactive lists, prefer `pp.state(...)` plus `pp-for` over manual DOM painting so rerenders keep the list stable.
 - Do not assume React, Vue, JSX-first component syntax, HTMX, or another frontend runtime unless the user explicitly requests one.
 
