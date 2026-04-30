@@ -1,8 +1,9 @@
-import { execFile, spawn } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { mkdir, readFile, readFileSync, rm, rmSync, writeFile } from "node:fs";
 import { promisify } from "node:util";
 import { dirname, join } from "node:path";
 import process from "node:process";
+import { createSrcWatcher, DebouncedWorker, DEFAULT_AWF, DEFAULT_IGNORES } from "./utils.js";
 
 const mode: "watch" | "build" =
   process.argv[2] === "watch" ? "watch" : "build";
@@ -20,9 +21,15 @@ const args: string[] = [
   "public/css/styles.css",
 ];
 
-if (mode === "watch") {
-  args.push("--watch");
-}
+const WATCH_IGNORES = [
+  ...DEFAULT_IGNORES,
+  "**/__pycache__/**",
+  "**/*.pyc",
+];
+
+type ClosableWatcher = {
+  close: () => Promise<void>;
+};
 
 function isValidPid(value: string): boolean {
   return /^\d+$/.test(value.trim());
@@ -131,24 +138,129 @@ async function writePidFile(): Promise<void> {
   await writeFileAsync(watcherPidFile, `${process.pid}\n`, "utf8");
 }
 
+function runPostcssBuild(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, args, {
+      stdio: "inherit",
+      windowsHide: true,
+      env: {
+        ...process.env,
+        PP_POSTCSS_MODE: mode,
+      },
+    });
+
+    activeBuild = child;
+
+    child.on("error", (error) => {
+      if (activeBuild === child) {
+        activeBuild = null;
+      }
+
+      reject(error);
+    });
+
+    child.on("exit", (code) => {
+      if (activeBuild === child) {
+        activeBuild = null;
+      }
+
+      resolve(code ?? 0);
+    });
+  });
+}
+
+function createWatchers(rebuildWorker: DebouncedWorker): ClosableWatcher[] {
+  const scheduleRebuild = (
+    _event: string,
+    _absPath: string,
+    relPath: string,
+  ) => {
+    rebuildWorker.schedule(relPath);
+  };
+
+  return [
+    createSrcWatcher(join(process.cwd(), "src", "**", "*"), {
+      exts: [".css", ".html", ".js", ".py"],
+      ignored: WATCH_IGNORES,
+      awaitWriteFinish: DEFAULT_AWF,
+      logPrefix: "tailwind:src",
+      onEvent: scheduleRebuild,
+    }),
+    createSrcWatcher(join(process.cwd(), "ts", "**", "*"), {
+      exts: [".js", ".jsx", ".ts", ".tsx"],
+      ignored: WATCH_IGNORES,
+      awaitWriteFinish: DEFAULT_AWF,
+      logPrefix: "tailwind:ts",
+      onEvent: scheduleRebuild,
+    }),
+    createSrcWatcher(join(process.cwd(), "postcss.config.js"), {
+      exts: [".js"],
+      ignored: WATCH_IGNORES,
+      awaitWriteFinish: DEFAULT_AWF,
+      logPrefix: "tailwind:config",
+      onEvent: scheduleRebuild,
+    }),
+  ];
+}
+
+async function closeWatchers(): Promise<void> {
+  await Promise.all(
+    sourceWatchers.splice(0).map(async (watcher) => {
+      try {
+        await watcher.close();
+      } catch {}
+    }),
+  );
+}
+
+async function runWatchMode(): Promise<void> {
+  const rebuildWorker = new DebouncedWorker(async () => {
+    try {
+      const exitCode = await runPostcssBuild();
+
+      if (exitCode !== 0) {
+        console.error(
+          `[tailwind] PostCSS exited with code ${exitCode}. Watching for the next change...`,
+        );
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  }, 150, "tailwind");
+
+  sourceWatchers.push(...createWatchers(rebuildWorker));
+
+  try {
+    const exitCode = await runPostcssBuild();
+
+    if (exitCode !== 0) {
+      console.error(
+        `[tailwind] Initial PostCSS build exited with code ${exitCode}. Watching for the next change...`,
+      );
+    }
+  } catch (error) {
+    console.error(error);
+  }
+}
+
 await cleanupStaleWatcher();
 await writePidFile();
 
-const child = spawn(process.execPath, args, {
-  stdio: "inherit",
-  windowsHide: true,
-  env: {
-    ...process.env,
-    PP_POSTCSS_MODE: mode,
-  },
-});
-
 let shuttingDown = false;
+let activeBuild: ChildProcess | null = null;
+const sourceWatchers: ClosableWatcher[] = [];
 
-child.on("error", (error) => {
-  console.error(error);
-  void shutdown(1);
-});
+if (mode === "watch") {
+  await runWatchMode();
+} else {
+  try {
+    const exitCode = await runPostcssBuild();
+    process.exit(exitCode);
+  } catch (error) {
+    console.error(error);
+    process.exit(1);
+  }
+}
 
 async function shutdown(exitCode: number): Promise<void> {
   if (shuttingDown) {
@@ -157,33 +269,15 @@ async function shutdown(exitCode: number): Promise<void> {
 
   shuttingDown = true;
 
-  if (child.pid && child.exitCode === null && !child.killed) {
-    await killProcessTree(child.pid);
+  await closeWatchers();
+
+  if (activeBuild?.pid && activeBuild.exitCode === null && !activeBuild.killed) {
+    await killProcessTree(activeBuild.pid);
   }
 
   await clearPidFile();
   process.exit(exitCode);
 }
-
-child.on("exit", async (code, signal) => {
-  await clearPidFile();
-
-  if (shuttingDown) {
-    process.exit(code ?? 0);
-    return;
-  }
-
-  if (signal) {
-    try {
-      process.kill(process.pid, signal);
-    } catch {
-      process.exit(1);
-    }
-    return;
-  }
-
-  process.exit(code ?? 0);
-});
 
 process.once("SIGINT", () => {
   void shutdown(0);
