@@ -8,6 +8,7 @@
 - This file owns repo-wide always-on rules for the workspace.
 - `AGENTS.md` should focus on task routing, runtime cross-checking, and packaged-doc maintenance rather than repeating full rule blocks from this file.
 - When packaged docs need to point AI from a feature guide to the controlling runtime file, prefer `node_modules/caspian-utils/dist/docs/core-runtime-map.md` instead of duplicating the full module map in multiple pages.
+- When packaged docs need to point AI from a PulsePoint feature or directive to the controlling browser behavior, prefer `node_modules/caspian-utils/dist/docs/pulsepoint-runtime-map.md` instead of duplicating the full browser feature map in multiple pages.
 
 ## Global Rules
 
@@ -18,6 +19,7 @@
 - If a feature is disabled and the user wants it, ask whether they want to enable it first, then update `caspian.config.json` and follow `npx casp update project` so framework-managed files align with the new feature set.
 - When `.github/instructions/**/*.instructions.md` files exist, treat them as workspace-local file instructions for specific libraries, component systems, icon sets, integrations, and implementation rules. Read the matching instruction before deciding how to implement work in that area, but do not let it override `caspian.config.json`, app code, or installed runtime behavior.
 - Treat `node_modules/caspian-utils/dist/docs/**` as packaged Caspian docs that teach AI how Caspian features work and where to look next. Their presence does not mean the feature is enabled in the current project.
+- Use `node_modules/caspian-utils/dist/docs/pulsepoint-runtime-map.md` for fast PulsePoint feature lookup before editing browser-side behavior or generating advanced PulsePoint patterns.
 - For current repo behavior, trust `main.py`, `src/lib/**`, `public/js/**`, `prisma/**`, and `src/app/**` over generic Caspian docs.
 - For framework internals, trust `.venv/Lib/site-packages/casp/**` over generic or older upstream guidance.
 - When packaged docs conflict with project code or installed runtime, the project code, `caspian.config.json`, and installed runtime win. Keep the packaged docs feature-oriented and point AI back to the project files that decide actual enablement and behavior.
