@@ -387,6 +387,8 @@ def register_single_route(url_pattern: str, file_path: str):
         req_should_cache = None
         req_cache_ttl = 0
 
+        page_content_source = file_path
+
         if file_path.endswith('.py'):
             module = load_route_module(file_path)
             if not hasattr(module, 'page'):
@@ -429,11 +431,14 @@ def register_single_route(url_pattern: str, file_path: str):
                 req_cache_ttl = cache_settings.ttl
 
             if isinstance(result, tuple):
-                content = str(result[0])
+                page_content = result[0]
+                content = str(page_content)
+                page_content_source = getattr(page_content, 'source_path', file_path)
                 if len(result) >= 2 and isinstance(result[1], dict):
                     page_layout_props = result[1]
             else:
                 content = str(result)
+                page_content_source = getattr(result, 'source_path', file_path)
 
             dynamic_meta = _runtime_metadata.get()
             static_meta = getattr(module, 'metadata', None)
@@ -464,7 +469,7 @@ def register_single_route(url_pattern: str, file_path: str):
             page_metadata=page_metadata,
             page_layout_props=page_layout_props,
             context_data=full_context,
-            page_component_source=file_path,
+            page_component_source=page_content_source,
             control_mode=True,
             component_compiler=transform_components
         )
