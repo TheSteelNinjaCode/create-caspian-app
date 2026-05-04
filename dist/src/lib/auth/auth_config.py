@@ -34,7 +34,7 @@ def build_auth_settings() -> AuthSettings:
         is_role_based=False,
         role_identifier="role",
 
-        # IMPORTANT: your current casp.auth expects PATH -> [ROLES]
+        # IMPORTANT: your current casp.auth expects ROUTE/PATTERN -> [ROLES]
         # Example (when enabled):
         # role_based_routes={
         #     "/report": ["admin"],
