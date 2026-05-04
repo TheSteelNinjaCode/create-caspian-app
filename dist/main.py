@@ -194,11 +194,14 @@ class AuthMiddleware:
             if oauth_response:
                 await oauth_response(scope, receive, send)
                 return
+        is_authenticated = auth_inst.is_authenticated()
+        if is_authenticated:
+            auth_inst.refresh_session()
         if auth_inst.is_public_route(path):
             await self.app(scope, receive, send)
             return
         if auth_inst.is_auth_route(path):
-            if auth_inst.is_authenticated():
+            if is_authenticated:
                 await RedirectResponse(
                     url=auth_inst.settings.default_signin_redirect,
                     status_code=303
@@ -210,7 +213,7 @@ class AuthMiddleware:
         if auth_inst.settings.is_role_based:
             required_roles = auth_inst.get_required_roles(path)
             if required_roles:
-                if not auth_inst.is_authenticated():
+                if not is_authenticated:
                     await RedirectResponse(url=f'/signin?next={path}', status_code=303)(scope, receive, send)
                     return
                 if not auth_inst.check_role(auth_inst.get_payload(), required_roles):
@@ -218,7 +221,7 @@ class AuthMiddleware:
                     return
 
         if auth_inst.is_private_route(path):
-            if not auth_inst.is_authenticated():
+            if not is_authenticated:
                 await RedirectResponse(url=f'/signin?next={path}', status_code=303)(scope, receive, send)
                 return
 
@@ -495,8 +498,21 @@ def register_single_route(url_pattern: str, file_path: str):
 
     endpoint = file_path.replace('/', '_').replace('\\', '_').replace(
         '.', '_').replace('[', '').replace(']', '').replace('(', '').replace(')', '')
-    app.add_api_route(url_pattern, make_handler, methods=[
-                      'GET', 'POST'], name=endpoint)
+
+    route_methods = ['GET', 'POST']
+    if file_path.endswith('.py'):
+        module = load_route_module(file_path)
+        declared_route_methods = getattr(module, 'route_methods', None)
+        if isinstance(declared_route_methods, (list, tuple)) and declared_route_methods:
+            normalized_methods = [
+                str(method).strip().upper()
+                for method in declared_route_methods
+                if str(method).strip()
+            ]
+            if normalized_methods:
+                route_methods = list(dict.fromkeys(normalized_methods))
+
+    app.add_api_route(url_pattern, make_handler, methods=route_methods, name=endpoint)
 
 
 register_routes()
@@ -538,6 +554,7 @@ async def custom_general_exception_handler(request: Request, exc: Exception):
     print(traceback.format_exc())
     error_message = str(exc)
     error_trace = traceback.format_exc() if not IS_PRODUCTION else None
+
     error_page_path = os.path.join('src', 'app', 'error.html')
     if os.path.exists(error_page_path):
         with open(error_page_path, 'r', encoding='utf-8') as f:
