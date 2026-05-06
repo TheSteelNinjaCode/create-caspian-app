@@ -1,9 +1,10 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { mkdir, readFile, readFileSync, rm, rmSync, writeFile } from "node:fs";
+import { existsSync, mkdir, readFile, readFileSync, rm, rmSync, writeFile } from "node:fs";
 import { promisify } from "node:util";
 import { dirname, join } from "node:path";
 import process from "node:process";
 import { createSrcWatcher, DebouncedWorker, DEFAULT_AWF, DEFAULT_IGNORES } from "./utils.js";
+import caspianConfig from "../caspian.config.json";
 
 const mode: "watch" | "build" =
   process.argv[2] === "watch" ? "watch" : "build";
@@ -178,19 +179,12 @@ function createWatchers(rebuildWorker: DebouncedWorker): ClosableWatcher[] {
     rebuildWorker.schedule(relPath);
   };
 
-  return [
+  const watchers: ClosableWatcher[] = [
     createSrcWatcher(join(process.cwd(), "src", "**", "*"), {
       exts: [".css", ".html", ".js", ".py"],
       ignored: WATCH_IGNORES,
       awaitWriteFinish: DEFAULT_AWF,
       logPrefix: "tailwind:src",
-      onEvent: scheduleRebuild,
-    }),
-    createSrcWatcher(join(process.cwd(), "ts", "**", "*"), {
-      exts: [".js", ".jsx", ".ts", ".tsx"],
-      ignored: WATCH_IGNORES,
-      awaitWriteFinish: DEFAULT_AWF,
-      logPrefix: "tailwind:ts",
       onEvent: scheduleRebuild,
     }),
     createSrcWatcher(join(process.cwd(), "postcss.config.js"), {
@@ -201,6 +195,21 @@ function createWatchers(rebuildWorker: DebouncedWorker): ClosableWatcher[] {
       onEvent: scheduleRebuild,
     }),
   ];
+
+  const tsRoot = join(process.cwd(), "ts");
+  if (caspianConfig.typescript && existsSync(tsRoot)) {
+    watchers.push(
+      createSrcWatcher(join(tsRoot, "**", "*"), {
+        exts: [".js", ".jsx", ".ts", ".tsx"],
+        ignored: WATCH_IGNORES,
+        awaitWriteFinish: DEFAULT_AWF,
+        logPrefix: "tailwind:ts",
+        onEvent: scheduleRebuild,
+      }),
+    );
+  }
+
+  return watchers;
 }
 
 async function closeWatchers(): Promise<void> {
