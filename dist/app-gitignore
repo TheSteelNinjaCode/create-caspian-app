@@ -3,6 +3,8 @@ node_modules/
 
 # virtual environment
 .venv/
+__pycache__/
+*.py[cod]
 
 # Environment files
 .env
