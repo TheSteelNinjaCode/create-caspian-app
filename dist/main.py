@@ -61,6 +61,10 @@ app = FastAPI(
     openapi_url="/openapi.json" if cfg.backendOnly else None,
 )
 
+@app.get("/health")
+async def healthcheck():
+    return {"status": "ok"}
+
 # ====
 # Configuration
 # ====
@@ -125,6 +129,14 @@ async def serve_js(filename: str):
 @app.get('/assets/{filename:path}')
 async def serve_assets(filename: str):
     file_path = Path('public/assets') / filename
+    if not file_path.exists():
+        return Response(status_code=404)
+    mime_type, _ = mimetypes.guess_type(str(file_path))
+    return FileResponse(file_path, media_type=mime_type or 'application/octet-stream')
+
+@app.get('/uploads/{filename:path}')
+async def serve_uploads(filename: str):
+    file_path = Path('public/uploads') / filename
     if not file_path.exists():
         return Response(status_code=404)
     mime_type, _ = mimetypes.guess_type(str(file_path))

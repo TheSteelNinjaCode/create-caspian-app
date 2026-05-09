@@ -1,6 +1,6 @@
 {
   "name": "create-caspian-app",
-  "version": "0.2.0-beta.84",
+  "version": "0.2.0-beta.85",
   "description": "Scaffold a new Caspian project (FastAPI-powered reactive Python framework).",
   "main": "dist/index.js",
   "type": "module",
@@ -31,9 +31,9 @@
   "author": "Jefferson Abraham Omier <thesteelninjacode@gmail.com>",
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "^25.6.3",
-    "eslint": "^9.39.2",
-    "typescript": "^5.9.3"
+    "@types/node": "^25.6.2",
+    "eslint": "^10.3.0",
+    "typescript": "^6.0.3"
   },
   "dependencies": {
     "chalk": "^5.6.2",
