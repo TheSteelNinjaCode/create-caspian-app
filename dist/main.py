@@ -36,6 +36,7 @@ from casp.layout import (
 import hashlib
 from casp.streaming import SSE
 from typing import Any, Optional, get_args, get_origin, Union
+from urllib.parse import urlparse
 from src.lib.auth.auth_config import build_auth_settings
 
 load_dotenv()
@@ -61,6 +62,7 @@ app = FastAPI(
     openapi_url="/openapi.json" if cfg.backendOnly else None,
 )
 
+
 @app.get("/health")
 async def healthcheck():
     return {"status": "ok"}
@@ -80,6 +82,9 @@ def _dev_cookie_scope() -> str:
         return ""
 
     scope = os.getenv("CASPIAN_BROWSER_SYNC_PORT")
+    if scope and scope.isdigit():
+        return scope
+
     if not scope:
         bs_config_path = Path("settings/bs-config.json")
         if bs_config_path.exists():
@@ -87,12 +92,15 @@ def _dev_cookie_scope() -> str:
                 local_url = json.loads(
                     bs_config_path.read_text(encoding="utf-8")
                 ).get("local", "")
-                scope = local_url.rsplit(":", 1)[-1].strip("/")
+                parsed_url = urlparse(local_url)
+                if parsed_url.hostname in {"localhost", "127.0.0.1"}:
+                    scope = str(parsed_url.port or "")
+                else:
+                    scope = ""
             except (OSError, json.JSONDecodeError):
                 scope = ""
 
-    scope = scope or os.getenv("PORT", "")
-    return scope if scope.isdigit() else ""
+    return scope if scope and scope.isdigit() else ""
 
 
 def _scoped_cookie_name(base_name: str) -> str:
@@ -133,6 +141,7 @@ async def serve_assets(filename: str):
         return Response(status_code=404)
     mime_type, _ = mimetypes.guess_type(str(file_path))
     return FileResponse(file_path, media_type=mime_type or 'application/octet-stream')
+
 
 @app.get('/uploads/{filename:path}')
 async def serve_uploads(filename: str):
@@ -448,7 +457,8 @@ def register_single_route(url_pattern: str, file_path: str):
             if isinstance(result, tuple):
                 page_content = result[0]
                 content = str(page_content)
-                page_content_source = getattr(page_content, 'source_path', file_path)
+                page_content_source = getattr(
+                    page_content, 'source_path', file_path)
                 if len(result) >= 2 and isinstance(result[1], dict):
                     page_layout_props = result[1]
             else:
@@ -524,7 +534,8 @@ def register_single_route(url_pattern: str, file_path: str):
             if normalized_methods:
                 route_methods = list(dict.fromkeys(normalized_methods))
 
-    app.add_api_route(url_pattern, make_handler, methods=route_methods, name=endpoint)
+    app.add_api_route(url_pattern, make_handler,
+                      methods=route_methods, name=endpoint)
 
 
 register_routes()
