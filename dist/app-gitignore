@@ -28,7 +28,5 @@ Thumbs.db # Windows
 .casp/
 caches/
 settings/bs-config.json
-settings/component-map.json
-settings/files-list.json
 settings/prisma-schema.json
 /src/generated/prisma
