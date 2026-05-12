@@ -64,8 +64,9 @@ Use `.github/copilot-instructions.md` for the repo-wide implementation rules. Th
 - Workspace file instructions live under `.github/instructions/**/*.instructions.md` when the repo needs task- or library-specific AI guidance that should not be always-on.
 - Use `node_modules/caspian-utils/dist/docs/core-runtime-map.md` when a behavior is controlled by `main.py` or `.venv/Lib/site-packages/casp/**` and the owning file is not obvious yet.
 - Use `node_modules/caspian-utils/dist/docs/pulsepoint-runtime-map.md` when a behavior is controlled by the shipped PulsePoint browser runtime and the task names state, effects, refs, context, portals, directives, `pp.rpc`, uploads, streaming, SPA navigation, or scroll restoration.
+- Use `node_modules/caspian-utils/dist/docs/file-conventions.md` when the task asks what belongs in `index.html`, `index.py`, `layout.html`, `layout.py`, `loading.html`, `not-found.html`, or `error.html`.
 - For grouped-subtree SPA navigation UX, the current browser runtime keeps unmarked shell scrollers stable and uses `pp-reset-scroll="true"` on the content pane that should reset. Check `pulsepoint.md`, `routing.md`, and `public/js/pp-reactive-v2.js` before changing that behavior.
-- Before updating docs, verify runtime-specific claims such as middleware order, route param injection, `layout()` sync behavior, and `StateManager` persistence against the current `main.py` and installed `casp` package rather than copying older notes.
+- Before updating docs, verify runtime-specific claims such as middleware order, route param injection, `layout()` behavior, and `StateManager` persistence against the current `main.py` and installed `casp` package rather than copying older notes.
 - When generating or reviewing `src/app/**/index.html`, `src/app/**/layout.html`, or component HTML templates, treat the single-root rule as a hard requirement: exactly one authored top-level parent element or one imported `x-*` root, with any owned `<script>` kept inside that same root. Do not allow sibling top-level tags, sibling scripts, or stray top-level text, because Caspian injects `pp-component` on that final root and errors if it cannot.
 
 ## Task Routing
@@ -74,23 +75,22 @@ Use this map before making changes.
 
 If the task generates or edits route, layout, or component HTML templates, check `routing.md`, `components.md`, and `pulsepoint.md` before writing markup. Enforce the single-root contract there: one authored root only, any owned `<script>` inside that root, and no sibling top-level nodes.
 
-| Task area                                 | Read first                                                                                                   | Verify against                                                                   |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| Project layout and file placement         | `node_modules/caspian-utils/dist/docs/index.md`, `node_modules/caspian-utils/dist/docs/project-structure.md` | current workspace tree                                                           |
-| Feature availability and tooling switches | `caspian.config.json`                                                                                        | current workspace tree, `main.py`, `prisma/**`, `public/js/**`                   |
-| Framework internals and core-file lookup  | `node_modules/caspian-utils/dist/docs/core-runtime-map.md`                                                   | `main.py`, `.venv/Lib/site-packages/casp/**`, matching feature docs              |
-| PulsePoint browser runtime lookup         | `node_modules/caspian-utils/dist/docs/pulsepoint-runtime-map.md`, `node_modules/caspian-utils/dist/docs/pulsepoint.md` | `public/js/pp-reactive-v2.js`, `main.py`, `.venv/Lib/site-packages/casp/scripts_type.py`, `.venv/Lib/site-packages/casp/components_compiler.py` |
-| Library-specific and task-specific rules  | matching `.github/instructions/**/*.instructions.md` files                                                   | `caspian.config.json`, current workspace tree, owning app and lib files          |
-| MCP server layout and launch flow         | `node_modules/caspian-utils/dist/docs/mcp.md`                                                                | `settings/restart-mcp.ts`, `package.json`, `src/lib/mcp/**`                      |
-| Routing, layouts, metadata                | `node_modules/caspian-utils/dist/docs/routing.md`                                                            | `main.py`, `.venv/Lib/site-packages/casp/layout.py`                              |
-| SPA navigation and scroll restoration     | `pulsepoint.md`, `routing.md`, `core-runtime-map.md`                                                         | `public/js/pp-reactive-v2.js`, `src/app/**/layout.html`, `main.py`               |
-| Auth, sessions, RBAC, providers           | `node_modules/caspian-utils/dist/docs/auth.md`                                                               | `src/lib/auth/auth_config.py`, `main.py`, `.venv/Lib/site-packages/casp/auth.py` |
-| RPC, data loading, streaming, uploads     | `node_modules/caspian-utils/dist/docs/fetch-data.md`, `node_modules/caspian-utils/dist/docs/pulsepoint.md`   | `.venv/Lib/site-packages/casp/rpc.py`, `public/js/pp-reactive-v2.js`, `main.py`  |
-| File uploads and managers                 | `node_modules/caspian-utils/dist/docs/file-uploads.md`, `node_modules/caspian-utils/dist/docs/fetch-data.md` | `src/app/**`, `src/lib/**`, `prisma/**`, `settings/bs-config.ts`                 |
-| Server state                              | `node_modules/caspian-utils/dist/docs/state.md`                                                              | `.venv/Lib/site-packages/casp/state_manager.py`, `main.py`                       |
-| Page caching                              | `node_modules/caspian-utils/dist/docs/cache.md`                                                              | `.venv/Lib/site-packages/casp/cache_handler.py`, `main.py`                       |
-| Validation                                | `node_modules/caspian-utils/dist/docs/validation.md`                                                         | `.venv/Lib/site-packages/casp/validate.py`                                       |
-| Database and seed flow                    | `node_modules/caspian-utils/dist/docs/database.md`                                                           | `prisma/schema.prisma`, `prisma/seed.ts`, `src/lib/prisma/**`                    |
+- Project layout and file placement: read `node_modules/caspian-utils/dist/docs/index.md` and `node_modules/caspian-utils/dist/docs/project-structure.md`. Verify against the current workspace tree.
+- File conventions and special route files: read `node_modules/caspian-utils/dist/docs/file-conventions.md` and `node_modules/caspian-utils/dist/docs/routing.md`. Verify against `main.py`, `.venv/Lib/site-packages/casp/layout.py`, `.venv/Lib/site-packages/casp/loading.py`, and `.venv/Lib/site-packages/casp/caspian_config.py`.
+- Feature availability and tooling switches: read `caspian.config.json`. Verify against the current workspace tree, `main.py`, `prisma/**`, and `public/js/**`.
+- Framework internals and core-file lookup: read `node_modules/caspian-utils/dist/docs/core-runtime-map.md`. Verify against `main.py`, `.venv/Lib/site-packages/casp/**`, and the matching feature docs.
+- PulsePoint browser runtime lookup: read `node_modules/caspian-utils/dist/docs/pulsepoint-runtime-map.md` and `node_modules/caspian-utils/dist/docs/pulsepoint.md`. Verify against `public/js/pp-reactive-v2.js`, `main.py`, `.venv/Lib/site-packages/casp/scripts_type.py`, and `.venv/Lib/site-packages/casp/components_compiler.py`.
+- Library-specific and task-specific rules: read the matching `.github/instructions/**/*.instructions.md` file. Verify against `caspian.config.json`, the current workspace tree, and the owning app and lib files.
+- MCP server layout and launch flow: read `node_modules/caspian-utils/dist/docs/mcp.md`. Verify against `settings/restart-mcp.ts`, `package.json`, and `src/lib/mcp/**`.
+- Routing, layouts, metadata: read `node_modules/caspian-utils/dist/docs/routing.md`. Verify against `main.py` and `.venv/Lib/site-packages/casp/layout.py`.
+- SPA navigation and scroll restoration: read `pulsepoint.md`, `routing.md`, and `core-runtime-map.md`. Verify against `public/js/pp-reactive-v2.js`, `src/app/**/layout.html`, and `main.py`.
+- Auth, sessions, RBAC, providers: read `node_modules/caspian-utils/dist/docs/auth.md`. Verify against `src/lib/auth/auth_config.py`, `main.py`, and `.venv/Lib/site-packages/casp/auth.py`.
+- RPC, data loading, streaming, uploads: read `node_modules/caspian-utils/dist/docs/fetch-data.md` and `node_modules/caspian-utils/dist/docs/pulsepoint.md`. Verify against `.venv/Lib/site-packages/casp/rpc.py`, `public/js/pp-reactive-v2.js`, and `main.py`.
+- File uploads and managers: read `node_modules/caspian-utils/dist/docs/file-uploads.md` and `node_modules/caspian-utils/dist/docs/fetch-data.md`. Verify against `src/app/**`, `src/lib/**`, `prisma/**`, and `settings/bs-config.ts`.
+- Server state: read `node_modules/caspian-utils/dist/docs/state.md`. Verify against `.venv/Lib/site-packages/casp/state_manager.py` and `main.py`.
+- Page caching: read `node_modules/caspian-utils/dist/docs/cache.md`. Verify against `.venv/Lib/site-packages/casp/cache_handler.py` and `main.py`.
+- Validation: read `node_modules/caspian-utils/dist/docs/validation.md`. Verify against `.venv/Lib/site-packages/casp/validate.py`.
+- Database and seed flow: read `node_modules/caspian-utils/dist/docs/database.md`. Verify against `prisma/schema.prisma`, `prisma/seed.ts`, and `src/lib/prisma/**`.
 
 ## Docs Maintenance Rules
 
@@ -106,7 +106,7 @@ If the task generates or edits route, layout, or component HTML templates, check
 - When `caspian.config.json` has `tailwindcss: true`, document Tailwind class handling as the current contract: Python `merge_classes(...)` emits frontend `{twMerge(...)}` expressions and browser `twMerge(...)` resolves conflicts.
 - Keep repo-specific clarifications in this file or `.github/copilot-instructions.md` rather than embedding them in the packaged docs unless the behavior is truly framework-wide.
 - Keep `index.md` and cross-links aligned so AI can discover the right task doc quickly.
-- Continue validating `routing.md`, `components.md`, `auth.md`, `fetch-data.md`, `cache.md`, `pulsepoint.md`, `validation.md`, `database.md`, and `mcp.md` against the installed `casp` runtime before changing behavior claims.
+- Continue validating `file-conventions.md`, `routing.md`, `components.md`, `auth.md`, `fetch-data.md`, `cache.md`, `pulsepoint.md`, `validation.md`, `database.md`, and `mcp.md` against the installed `casp` runtime before changing behavior claims.
 
 ## Maintenance Checklist
 
