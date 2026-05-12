@@ -9,6 +9,12 @@ import caspianConfig from "../caspian.config.json";
 const mode: "watch" | "build" =
   process.argv[2] === "watch" ? "watch" : "build";
 const watcherPidFile = join(process.cwd(), ".casp", "postcss-watch.pid");
+const WATCH_PROCESS_ENV = {
+  ...process.env,
+  NO_COLOR: "1",
+  FORCE_COLOR: "0",
+  NODE_DISABLE_COLORS: "1",
+};
 const mkdirAsync = promisify(mkdir);
 const readFileAsync = promisify(readFile);
 const rmAsync = promisify(rm);
@@ -145,7 +151,7 @@ function runPostcssBuild(): Promise<number> {
       stdio: "inherit",
       windowsHide: true,
       env: {
-        ...process.env,
+        ...WATCH_PROCESS_ENV,
         PP_POSTCSS_MODE: mode,
       },
     });
