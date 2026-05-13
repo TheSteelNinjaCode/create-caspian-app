@@ -34,6 +34,7 @@ DEFAULT_CSP_DIRECTIVES: tuple[tuple[str, list[str]], ...] = (
 # load a third-party resource that is not already covered by the defaults.
 # Example:
 # PROJECT_CSP_EXTRA_SOURCES = {
+#     "img-src": ["https://images.unsplash.com"],
 #     "script-src-elem": ["https://cdn.jsdelivr.net"],
 #     "connect-src": ["https://api.example.com"],
 # }
