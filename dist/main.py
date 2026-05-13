@@ -3,7 +3,6 @@ from casp.scripts_type import transform_scripts
 import inspect
 import os
 import importlib.util
-import mimetypes
 import secrets
 import traceback
 import json
@@ -39,6 +38,12 @@ from casp.streaming import SSE
 from typing import Any, Optional, get_args, get_origin, Union
 from urllib.parse import urlparse
 from src.lib.auth.auth_config import build_auth_settings
+from src.lib.security.runtime_security import (
+    build_security_headers,
+    client_error_message,
+    get_session_secret,
+    public_file_response,
+)
 
 load_dotenv()
 cfg = get_config()
@@ -76,89 +81,18 @@ MAX_CONTENT_LENGTH_MB = int(os.getenv('MAX_CONTENT_LENGTH_MB', 16))
 IS_PRODUCTION = os.getenv('APP_ENV') == 'production'
 CACHE_ENABLED = os.getenv('CACHE_ENABLED', 'false').lower() == 'true'
 DEFAULT_TTL = int(os.getenv('CACHE_TTL', 600))
-INSECURE_SESSION_SECRET_VALUES = {"", "change-me", "changeme"}
-
-
-def _resolve_safe_public_path(base_dir: str | Path, relative_path: str) -> Optional[Path]:
-    base_path = Path(base_dir).resolve()
-    try:
-        candidate = (base_path / relative_path).resolve()
-        candidate.relative_to(base_path)
-    except (OSError, RuntimeError, ValueError):
-        return None
-
-    if not candidate.is_file():
-        return None
-
-    return candidate
-
-
-def _public_file_response(
-    base_dir: str | Path,
-    relative_path: str,
-    *,
-    media_type: Optional[str] = None,
-) -> Response:
-    file_path = _resolve_safe_public_path(base_dir, relative_path)
-    if file_path is None:
-        return Response(status_code=404)
-
-    resolved_media_type = media_type
-    if resolved_media_type is None:
-        resolved_media_type, _ = mimetypes.guess_type(str(file_path))
-
-    return FileResponse(
-        file_path,
-        media_type=resolved_media_type or 'application/octet-stream',
-    )
 
 
 def _client_error_message(exc: Exception) -> str:
-    return str(exc) if not IS_PRODUCTION else 'An unexpected error occurred.'
+    return client_error_message(exc, is_production=IS_PRODUCTION)
 
 
 def _get_session_secret() -> str:
-    session_secret = (os.getenv("AUTH_SECRET") or "").strip()
-    if session_secret and session_secret.lower() not in INSECURE_SESSION_SECRET_VALUES:
-        return session_secret
-
-    if not IS_PRODUCTION:
-        return "change-me"
-
-    raise RuntimeError(
-        "AUTH_SECRET must be set to a non-default value when APP_ENV=production."
-    )
-
-
-def _build_content_security_policy() -> str:
-    # PulsePoint currently relies on inline scripts/styles and runtime codegen,
-    # so this policy tightens source scope without breaking the app runtime.
-    directives = [
-        "default-src 'self'",
-        "base-uri 'self'",
-        "object-src 'none'",
-        "frame-ancestors 'self'",
-        "form-action 'self'",
-        "img-src 'self' data: blob:",
-        "font-src 'self' data:",
-        "connect-src 'self'",
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-        "style-src 'self' 'unsafe-inline'",
-    ]
-    return "; ".join(directives)
+    return get_session_secret(is_production=IS_PRODUCTION)
 
 
 def _build_security_headers() -> dict[str, str]:
-    headers = {
-        "content-security-policy": _build_content_security_policy(),
-        "permissions-policy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()",
-        "referrer-policy": "strict-origin-when-cross-origin",
-        "x-content-type-options": "nosniff",
-        "x-frame-options": "SAMEORIGIN",
-    }
-    if IS_PRODUCTION:
-        headers["strict-transport-security"] = "max-age=31536000; includeSubDomains"
-    return headers
+    return build_security_headers(is_production=IS_PRODUCTION)
 
 
 def _dev_cookie_scope() -> str:
@@ -204,12 +138,12 @@ SESSION_COOKIE_NAME = _scoped_cookie_name(
 
 @app.get('/css/{filename:path}')
 async def serve_css(filename: str):
-    return _public_file_response('public/css', filename, media_type='text/css')
+    return public_file_response('public/css', filename, media_type='text/css')
 
 
 @app.get('/js/{filename:path}')
 async def serve_js(filename: str):
-    return _public_file_response(
+    return public_file_response(
         'public/js',
         filename,
         media_type='application/javascript',
@@ -218,12 +152,12 @@ async def serve_js(filename: str):
 
 @app.get('/assets/{filename:path}')
 async def serve_assets(filename: str):
-    return _public_file_response('public/assets', filename)
+    return public_file_response('public/assets', filename)
 
 
 @app.get('/uploads/{filename:path}')
 async def serve_uploads(filename: str):
-    return _public_file_response('public/uploads', filename)
+    return public_file_response('public/uploads', filename)
 
 
 @app.get('/favicon.ico')
