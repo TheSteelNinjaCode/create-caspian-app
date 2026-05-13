@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse
+from starlette.datastructures import MutableHeaders
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -75,6 +76,89 @@ MAX_CONTENT_LENGTH_MB = int(os.getenv('MAX_CONTENT_LENGTH_MB', 16))
 IS_PRODUCTION = os.getenv('APP_ENV') == 'production'
 CACHE_ENABLED = os.getenv('CACHE_ENABLED', 'false').lower() == 'true'
 DEFAULT_TTL = int(os.getenv('CACHE_TTL', 600))
+INSECURE_SESSION_SECRET_VALUES = {"", "change-me", "changeme"}
+
+
+def _resolve_safe_public_path(base_dir: str | Path, relative_path: str) -> Optional[Path]:
+    base_path = Path(base_dir).resolve()
+    try:
+        candidate = (base_path / relative_path).resolve()
+        candidate.relative_to(base_path)
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+    if not candidate.is_file():
+        return None
+
+    return candidate
+
+
+def _public_file_response(
+    base_dir: str | Path,
+    relative_path: str,
+    *,
+    media_type: Optional[str] = None,
+) -> Response:
+    file_path = _resolve_safe_public_path(base_dir, relative_path)
+    if file_path is None:
+        return Response(status_code=404)
+
+    resolved_media_type = media_type
+    if resolved_media_type is None:
+        resolved_media_type, _ = mimetypes.guess_type(str(file_path))
+
+    return FileResponse(
+        file_path,
+        media_type=resolved_media_type or 'application/octet-stream',
+    )
+
+
+def _client_error_message(exc: Exception) -> str:
+    return str(exc) if not IS_PRODUCTION else 'An unexpected error occurred.'
+
+
+def _get_session_secret() -> str:
+    session_secret = (os.getenv("AUTH_SECRET") or "").strip()
+    if session_secret and session_secret.lower() not in INSECURE_SESSION_SECRET_VALUES:
+        return session_secret
+
+    if not IS_PRODUCTION:
+        return "change-me"
+
+    raise RuntimeError(
+        "AUTH_SECRET must be set to a non-default value when APP_ENV=production."
+    )
+
+
+def _build_content_security_policy() -> str:
+    # PulsePoint currently relies on inline scripts/styles and runtime codegen,
+    # so this policy tightens source scope without breaking the app runtime.
+    directives = [
+        "default-src 'self'",
+        "base-uri 'self'",
+        "object-src 'none'",
+        "frame-ancestors 'self'",
+        "form-action 'self'",
+        "img-src 'self' data: blob:",
+        "font-src 'self' data:",
+        "connect-src 'self'",
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+        "style-src 'self' 'unsafe-inline'",
+    ]
+    return "; ".join(directives)
+
+
+def _build_security_headers() -> dict[str, str]:
+    headers = {
+        "content-security-policy": _build_content_security_policy(),
+        "permissions-policy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "SAMEORIGIN",
+    }
+    if IS_PRODUCTION:
+        headers["strict-transport-security"] = "max-age=31536000; includeSubDomains"
+    return headers
 
 
 def _dev_cookie_scope() -> str:
@@ -120,36 +204,26 @@ SESSION_COOKIE_NAME = _scoped_cookie_name(
 
 @app.get('/css/{filename:path}')
 async def serve_css(filename: str):
-    file_path = Path('public/css') / filename
-    if not file_path.exists():
-        return Response(status_code=404)
-    return FileResponse(file_path, media_type='text/css')
+    return _public_file_response('public/css', filename, media_type='text/css')
 
 
 @app.get('/js/{filename:path}')
 async def serve_js(filename: str):
-    file_path = Path('public/js') / filename
-    if not file_path.exists():
-        return Response(status_code=404)
-    return FileResponse(file_path, media_type='application/javascript')
+    return _public_file_response(
+        'public/js',
+        filename,
+        media_type='application/javascript',
+    )
 
 
 @app.get('/assets/{filename:path}')
 async def serve_assets(filename: str):
-    file_path = Path('public/assets') / filename
-    if not file_path.exists():
-        return Response(status_code=404)
-    mime_type, _ = mimetypes.guess_type(str(file_path))
-    return FileResponse(file_path, media_type=mime_type or 'application/octet-stream')
+    return _public_file_response('public/assets', filename)
 
 
 @app.get('/uploads/{filename:path}')
 async def serve_uploads(filename: str):
-    file_path = Path('public/uploads') / filename
-    if not file_path.exists():
-        return Response(status_code=404)
-    mime_type, _ = mimetypes.guess_type(str(file_path))
-    return FileResponse(file_path, media_type=mime_type or 'application/octet-stream')
+    return _public_file_response('public/uploads', filename)
 
 
 @app.get('/favicon.ico')
@@ -188,6 +262,29 @@ class CSRFMiddleware:
                 new_headers.append((b"set-cookie", cookie_value.encode()))
                 message = {**message, "headers": new_headers}
             await send(message)
+        await self.app(scope, receive, send_wrapper)
+
+
+class SecurityHeadersMiddleware:
+    """Attach baseline browser security headers to HTTP responses."""
+
+    def __init__(self, app: ASGIApp): self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                raw_headers = list(message.get("headers", []))
+                headers = MutableHeaders(raw=raw_headers)
+                for name, value in _build_security_headers().items():
+                    if headers.get(name) is None:
+                        headers[name] = value
+                message = {**message, "headers": raw_headers}
+            await send(message)
+
         await self.app(scope, receive, send_wrapper)
 
 
@@ -574,9 +671,10 @@ async def custom_404_handler(request: Request, exc: StarletteHTTPException):
 
 @app.exception_handler(Exception)
 async def custom_general_exception_handler(request: Request, exc: Exception):
-    print(traceback.format_exc())
-    error_message = str(exc)
-    error_trace = traceback.format_exc() if not IS_PRODUCTION else None
+    full_trace = traceback.format_exc()
+    print(full_trace)
+    error_message = _client_error_message(exc)
+    error_trace = full_trace if not IS_PRODUCTION else None
 
     error_page_path = os.path.join('src', 'app', 'error.html')
     if os.path.exists(error_page_path):
@@ -619,13 +717,14 @@ app.add_middleware(CSRFMiddleware)
 
 app.add_middleware(
     SessionMiddleware,
-    secret_key=os.getenv('AUTH_SECRET', 'change-me'),
+    secret_key=_get_session_secret(),
     session_cookie=SESSION_COOKIE_NAME,
     max_age=SESSION_LIFETIME_HOURS * 3600,
     same_site='lax',
     https_only=IS_PRODUCTION,
     path='/',
 )
+app.add_middleware(SecurityHeadersMiddleware)
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5091))
