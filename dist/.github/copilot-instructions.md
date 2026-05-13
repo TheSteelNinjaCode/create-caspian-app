@@ -69,8 +69,9 @@
 
 ### `main.py`
 
-- Treat `main.py` as the repo source of truth for FastAPI setup, static asset routes, auth bootstrap, middleware order, route registration, cache defaults, and error handlers.
-- Preserve the effective middleware execution order unless the task explicitly changes request semantics: `SessionMiddleware -> CSRFMiddleware -> AuthMiddleware -> RPCMiddleware`.
+- Treat `main.py` as the repo source of truth for FastAPI setup, auth bootstrap, middleware wiring, route registration, cache defaults, and error handlers.
+- When the app factors browser hardening or safe static-file behavior into app-owned helpers, treat `main.py` plus those imported helpers as the runtime source of truth together.
+- Preserve the effective middleware execution order unless the task explicitly changes request semantics: `SecurityHeadersMiddleware -> SessionMiddleware -> CSRFMiddleware -> AuthMiddleware -> RPCMiddleware`.
 - Do not move normal file upload or file-manager behavior into `main.py`; keep those actions in the owning route `index.py` and shared helpers in `src/lib/**`.
 - Document route param behavior exactly as implemented here.
 - Do not use `main.py` alone to infer whether optional features are enabled; confirm that in `caspian.config.json` first.
@@ -83,6 +84,7 @@
 - For file managers, keep shared storage, normalization, and Prisma-backed persistence helpers here while route-owned upload and delete `@rpc()` actions stay in `src/app/**/index.py`.
 - When `caspian.config.json` has `mcp: true`, keep app-owned MCP tools in `src/lib/mcp/mcp_server.py` and keep the default FastMCP config in `src/lib/mcp/fastmcp.json`. If those locations change, update `settings/restart-mcp.ts` and the MCP docs together.
 - Keep auth policy in `src/lib/auth/auth_config.py`. Keep auth bootstrap and middleware order changes in `main.py`.
+- Keep app-owned browser hardening, CSP defaults, safe static-file helpers, and production session-secret enforcement in `src/lib/security/runtime_security.py` when that module exists.
 
 ### `src/components/**/*.py`
 
