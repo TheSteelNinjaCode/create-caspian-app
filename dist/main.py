@@ -38,7 +38,7 @@ from casp.streaming import SSE
 from typing import Any, Optional, get_args, get_origin, Union
 from urllib.parse import urlparse
 from src.lib.auth.auth_config import build_auth_settings
-from src.lib.security.runtime_security import (
+from casp.runtime_security import (
     build_security_headers,
     client_error_message,
     get_session_secret,

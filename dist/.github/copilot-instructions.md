@@ -33,6 +33,7 @@
 - Treat `settings/component-map.json` and `settings/files-list.json` as generated outputs owned by `settings/component-map.ts` and `settings/files-list.ts`; inspect them when needed, but do not hand-edit them.
 - When `caspian.config.json` has `mcp: true`, treat `src/lib/mcp/mcp_server.py` as the app-owned FastMCP server and `src/lib/mcp/fastmcp.json` as the default MCP config. Use `npm run mcp` or `fastmcp run src/lib/mcp/fastmcp.json`; do not assume root `fastmcp.json` auto-discovery.
 - Keep auth policy in `src/lib/auth/auth_config.py` and keep auth bootstrap, middleware wiring, and provider registration in `main.py`.
+- Treat `casp.runtime_security` in `.venv/Lib/site-packages/casp/runtime_security.py` as package-owned runtime support for safe public-file serving, production session-secret enforcement, production-safe error messaging, and baseline non-CSP response headers. Users should not customize this file during normal app work.
 - In app-owned starter config like this workspace, routes start public because `src/lib/auth/auth_config.py` sets `is_all_routes_private=False` by default.
 - Decide route privacy in `src/lib/auth/auth_config.py` at app setup time: use `is_all_routes_private=True` when only a few routes should stay public, otherwise keep `is_all_routes_private=False` and list the protected routes in `private_routes`.
 - In all-private mode, keep public exceptions in `public_routes`; the runtime defaults keep `/` public and keep `auth_routes=["/signin", "/signup"]` public.
@@ -70,7 +71,7 @@
 ### `main.py`
 
 - Treat `main.py` as the repo source of truth for FastAPI setup, auth bootstrap, middleware wiring, route registration, cache defaults, and error handlers.
-- When the app factors browser hardening or safe static-file behavior into app-owned helpers, treat `main.py` plus those imported helpers as the runtime source of truth together.
+- When the app factors response-header hardening or safe static-file behavior into app-owned helpers, treat `main.py` plus those imported helpers as the runtime source of truth together.
 - Preserve the effective middleware execution order unless the task explicitly changes request semantics: `SecurityHeadersMiddleware -> SessionMiddleware -> CSRFMiddleware -> AuthMiddleware -> RPCMiddleware`.
 - Do not move normal file upload or file-manager behavior into `main.py`; keep those actions in the owning route `index.py` and shared helpers in `src/lib/**`.
 - Document route param behavior exactly as implemented here.
@@ -84,7 +85,7 @@
 - For file managers, keep shared storage, normalization, and Prisma-backed persistence helpers here while route-owned upload and delete `@rpc()` actions stay in `src/app/**/index.py`.
 - When `caspian.config.json` has `mcp: true`, keep app-owned MCP tools in `src/lib/mcp/mcp_server.py` and keep the default FastMCP config in `src/lib/mcp/fastmcp.json`. If those locations change, update `settings/restart-mcp.ts` and the MCP docs together.
 - Keep auth policy in `src/lib/auth/auth_config.py`. Keep auth bootstrap and middleware order changes in `main.py`.
-- Keep app-owned browser hardening, CSP defaults, safe static-file helpers, and production session-secret enforcement in `src/lib/security/runtime_security.py` when that module exists.
+- Do not recreate or customize `src/lib/security/runtime_security.py` for normal application work. Runtime security helpers are package-owned in `casp.runtime_security`; app-specific policy should live in app-owned config or route/helper code instead.
 
 ### `src/components/**/*.py`
 
@@ -136,6 +137,7 @@
 - Treat these files as framework internals.
 - Only change them when the task is explicitly about Caspian core behavior, installed-runtime debugging, or documentation that must match the installed implementation.
 - If behavior changes here, update the matching docs under `node_modules/caspian-utils/dist/docs/`.
+- `casp/runtime_security.py` owns framework-managed safe public-file serving, baseline non-CSP response headers, production-safe error messages, and production session-secret enforcement used by `main.py`.
 
 ### `.github/instructions/**/*.instructions.md`
 
