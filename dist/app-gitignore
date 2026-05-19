@@ -29,4 +29,3 @@ Thumbs.db # Windows
 caches/
 settings/bs-config.json
 settings/prisma-schema.json
-/src/generated/prisma
