@@ -1,11 +1,13 @@
 from casp.components_compiler import transform_components
 from casp.scripts_type import transform_scripts
+import asyncio
 import inspect
 import os
 import importlib.util
 import secrets
 import traceback
 import json
+import time
 from pathlib import Path
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse
@@ -81,6 +83,10 @@ MAX_CONTENT_LENGTH_MB = int(os.getenv('MAX_CONTENT_LENGTH_MB', 16))
 IS_PRODUCTION = os.getenv('APP_ENV') == 'production'
 CACHE_ENABLED = os.getenv('CACHE_ENABLED', 'false').lower() == 'true'
 DEFAULT_TTL = int(os.getenv('CACHE_TTL', 600))
+REQUEST_TIMEOUT_SECONDS = max(
+    1.0,
+    float(os.getenv('CASPIAN_REQUEST_TIMEOUT_SECONDS', 20)),
+)
 
 
 def _client_error_message(exc: Exception) -> str:
@@ -298,6 +304,57 @@ class RPCMiddleware:
             await response(scope, receive, send)
             return
         await self.app(scope, receive, send)
+
+
+class RequestDiagnosticsMiddleware:
+    """Log request start/end in dev and fail visibly when a route stalls."""
+
+    def __init__(self, app: ASGIApp): self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        method = scope.get("method", "GET")
+        path = scope.get("path", "")
+        should_log = not path.startswith(('/css/', '/js/', '/assets/', '/favicon.ico'))
+        started = time.perf_counter()
+
+        if should_log and not IS_PRODUCTION:
+            print(f"[request:start] {method} {path}", flush=True)
+
+        try:
+            await asyncio.wait_for(
+                self.app(scope, receive, send),
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            print(
+                f"[request:timeout] {method} {path} exceeded "
+                f"{REQUEST_TIMEOUT_SECONDS:g}s after {elapsed_ms}ms",
+                flush=True,
+            )
+            response = HTMLResponse(
+                content=(
+                    "<h1>504 - Request Timeout</h1>"
+                    "<p>The route took too long to respond. "
+                    "Check the development terminal for the stalled path.</p>"
+                ),
+                status_code=504,
+            )
+            await response(scope, receive, send)
+            return
+        except Exception:
+            if should_log and not IS_PRODUCTION:
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                print(f"[request:error] {method} {path} after {elapsed_ms}ms", flush=True)
+            raise
+        finally:
+            if should_log and not IS_PRODUCTION:
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                print(f"[request:end] {method} {path} {elapsed_ms}ms", flush=True)
 
 # ====
 # Route Registration
@@ -659,6 +716,7 @@ app.add_middleware(
     path='/',
 )
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestDiagnosticsMiddleware)
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5091))
