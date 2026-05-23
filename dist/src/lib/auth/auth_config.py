@@ -4,11 +4,12 @@ from casp.auth import AuthSettings
 
 def build_auth_settings() -> AuthSettings:
     """
-    Centralized auth configuration.
+    Centralized app auth policy controller.
 
     Keep secrets (AUTH_SECRET, AUTH_COOKIE_NAME) in .env.
     Keep app-level session settings in .env (SESSION_LIFETIME_HOURS, etc).
-    Decide route privacy here at app setup time instead of changing Caspian core files.
+    Decide route privacy, redirects, and RBAC here at app setup time instead of
+    changing Caspian core runtime files.
 
     Rule of thumb:
     - If most routes should require auth, set is_all_routes_private=True and list only the public exceptions.
@@ -34,7 +35,7 @@ def build_auth_settings() -> AuthSettings:
         is_role_based=False,
         role_identifier="role",
 
-        # IMPORTANT: your current casp.auth expects ROUTE/PATTERN -> [ROLES]
+        # RBAC policy is app-owned here; the runtime expects ROUTE/PATTERN -> [ROLES].
         # Example (when enabled):
         # role_based_routes={
         #     "/report": ["admin"],

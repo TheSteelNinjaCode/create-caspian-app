@@ -29,7 +29,7 @@ from casp.auth import (
 from casp.rpc import register_rpc_routes
 from casp.layout import (
     render_with_nested_layouts,
-    string_env,
+    compile_template,
     load_template_file,
     render_page,
     _runtime_injections,
@@ -674,8 +674,7 @@ async def custom_general_exception_handler(request: Request, exc: Exception):
         context_data = {'request': request,
                         'error_message': error_message, 'error_trace': error_trace}
         try:
-            rendered_content = string_env.from_string(
-                raw_content).render(**context_data)
+            rendered_content = compile_template(raw_content).render(**context_data)
             html_output, root_layout_id = await render_with_nested_layouts(
                 children=rendered_content,
                 route_dir='src/app',
