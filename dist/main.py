@@ -318,7 +318,8 @@ class RequestDiagnosticsMiddleware:
 
         method = scope.get("method", "GET")
         path = scope.get("path", "")
-        should_log = not path.startswith(('/css/', '/js/', '/assets/', '/favicon.ico'))
+        should_log = not path.startswith(
+            ('/css/', '/js/', '/assets/', '/favicon.ico'))
         started = time.perf_counter()
 
         if should_log and not IS_PRODUCTION:
@@ -349,12 +350,14 @@ class RequestDiagnosticsMiddleware:
         except Exception:
             if should_log and not IS_PRODUCTION:
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
-                print(f"[request:error] {method} {path} after {elapsed_ms}ms", flush=True)
+                print(
+                    f"[request:error] {method} {path} after {elapsed_ms}ms", flush=True)
             raise
         finally:
             if should_log and not IS_PRODUCTION:
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
-                print(f"[request:end] {method} {path} {elapsed_ms}ms", flush=True)
+                print(
+                    f"[request:end] {method} {path} {elapsed_ms}ms", flush=True)
 
 # ====
 # Route Registration
@@ -674,7 +677,8 @@ async def custom_general_exception_handler(request: Request, exc: Exception):
         context_data = {'request': request,
                         'error_message': error_message, 'error_trace': error_trace}
         try:
-            rendered_content = compile_template(raw_content).render(**context_data)
+            rendered_content = compile_template(
+                raw_content).render(**context_data)
             html_output, root_layout_id = await render_with_nested_layouts(
                 children=rendered_content,
                 route_dir='src/app',
@@ -715,8 +719,17 @@ app.add_middleware(
     path='/',
 )
 app.add_middleware(SecurityHeadersMiddleware)
-app.add_middleware(RequestDiagnosticsMiddleware)
+
+if not IS_PRODUCTION:
+    app.add_middleware(RequestDiagnosticsMiddleware)
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5091))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    workers = max(1, int(os.getenv('UVICORN_WORKERS', '1')))
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=port,
+        reload=False,
+        workers=workers,
+    )

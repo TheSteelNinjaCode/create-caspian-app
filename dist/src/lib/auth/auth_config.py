@@ -26,7 +26,7 @@ def build_auth_settings() -> AuthSettings:
         # This app-owned starter config begins public-first; switch to True only when most routes require auth.
         # Use all-private mode when only a few routes should stay public.
         is_all_routes_private=False,
-        public_routes=["/"],
+        public_routes=["/", "/health",],
         # Sign-in and signup stay public by default; only change this when the app explicitly needs it.
         auth_routes=["/signin", "/signup"],
         private_routes=[],  # unused when all-routes-private is True
