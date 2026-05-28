@@ -87,6 +87,11 @@ REQUEST_TIMEOUT_SECONDS = max(
     1.0,
     float(os.getenv('CASPIAN_REQUEST_TIMEOUT_SECONDS', 20)),
 )
+MAX_CONTENT_LENGTH_BYTES = max(1, MAX_CONTENT_LENGTH_MB) * 1024 * 1024
+
+
+class RequestBodyTooLarge(Exception):
+    pass
 
 
 def _client_error_message(exc: Exception) -> str:
@@ -226,6 +231,67 @@ class SecurityHeadersMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
+
+
+class BodySizeLimitMiddleware:
+    """Reject oversized HTTP request bodies before route or RPC parsing."""
+
+    def __init__(self, app: ASGIApp): self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = MutableHeaders(scope=scope)
+        content_length = headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > MAX_CONTENT_LENGTH_BYTES:
+                    await self._send_too_large(send)
+                    return
+            except ValueError:
+                pass
+
+        received = 0
+        response_started = False
+
+        async def limited_receive():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > MAX_CONTENT_LENGTH_BYTES:
+                    raise RequestBodyTooLarge()
+            return message
+
+        async def send_wrapper(message):
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, send_wrapper)
+        except RequestBodyTooLarge:
+            if not response_started:
+                await self._send_too_large(send)
+
+    async def _send_too_large(self, send: Send):
+        response = Response(
+            content="Request body too large.",
+            status_code=413,
+            media_type="text/plain",
+        )
+
+        async def receive_empty_body():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        await response(
+            {"type": "http", "method": "POST", "path": "/", "headers": []},
+            receive=receive_empty_body,
+            send=send,
+        )
 
 
 class AuthMiddleware:
@@ -718,6 +784,7 @@ app.add_middleware(
     https_only=IS_PRODUCTION,
     path='/',
 )
+app.add_middleware(BodySizeLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
 if not IS_PRODUCTION:
