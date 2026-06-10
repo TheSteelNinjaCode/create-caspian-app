@@ -1,7 +1,7 @@
 {
-  "local": "http://localhost:5090",
-  "external": "http://172.18.64.1:5090",
-  "ui": "http://localhost:3001",
-  "uiExternal": "http://172.18.64.1:3001",
-  "backend": "http://localhost:5091"
+  "local": "http://localhost:5091",
+  "external": "http://192.168.1.109:5091",
+  "ui": "http://localhost:3003",
+  "uiExternal": "http://192.168.1.109:3003",
+  "backend": "http://localhost:5201"
 }

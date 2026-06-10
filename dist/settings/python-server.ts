@@ -17,7 +17,7 @@ function getVenvPythonPath(): string {
     : join(".venv", "bin", "python");
 
   if (!existsSync(venvPython)) {
-    console.warn(`⚠ Virtual environment not found, using system python`);
+    console.warn("Warning: Virtual environment not found, using system python");
     return isWindows() ? "python" : "python3";
   }
   return venvPython;
@@ -118,7 +118,7 @@ function spawnPython(port: number, browserSyncPort?: number): ChildProcess {
   const pythonPath = getVenvPythonPath();
   const args = ["-u", "main.py"];
 
-  console.log(`→ Starting Python server on port ${port}...`);
+  console.log(`-> Starting Python server on port ${port}...`);
 
   const env = {
     ...process.env,
@@ -156,7 +156,7 @@ export async function restartPythonServer(
   isRestarting = true;
 
   try {
-    console.log("→ Restarting Python server...");
+    console.log("-> Restarting Python server...");
     const prev = pythonProcess;
     pythonProcess = null;
 
@@ -176,13 +176,3 @@ export function stopPythonServer(): void {
   pythonProcess = null;
   if (prev) killProcessTree(prev);
 }
-
-process.on("exit", () => stopPythonServer());
-process.on("SIGINT", () => {
-  stopPythonServer();
-  process.exit(0);
-});
-process.on("SIGTERM", () => {
-  stopPythonServer();
-  process.exit(0);
-});

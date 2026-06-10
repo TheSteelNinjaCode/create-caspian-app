@@ -109,7 +109,7 @@ export class DebouncedWorker {
   ) {}
 
   schedule(reason?: string) {
-    if (reason) console.log(`[${this.name}] ${reason} → scheduled`);
+    if (reason) console.log(`[${this.name}] ${reason} -> scheduled`);
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.timer = null;
@@ -203,7 +203,7 @@ export function createRestartableProcess(spec: {
   async function stop(): Promise<void> {
     if (!child || child.killed) return;
     const pid = child.pid!;
-    console.log(`[${name}] Stopping…`);
+    console.log(`[${name}] Stopping...`);
 
     if (process.platform === "win32" && windowsKillTree) {
       await killOnWindows(pid);
@@ -245,7 +245,7 @@ export function createRestartableProcess(spec: {
 
 export function onExit(fn: () => Promise<void> | void) {
   const wrap = (sig: string) => async () => {
-    console.log(`[proc] Received ${sig}, shutting down…`);
+    console.log(`[proc] Received ${sig}, shutting down...`);
     try {
       await fn();
     } finally {

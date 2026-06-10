@@ -8,6 +8,7 @@ import { DebouncedWorker, createSrcWatcher, DEFAULT_AWF } from "./utils.js";
 import {
   startPythonServer,
   restartPythonServer,
+  stopPythonServer,
   waitForPort,
 } from "./python-server.js";
 import { componentMap } from "./component-map.js";
@@ -25,6 +26,7 @@ const PUBLIC_ROOT = join(WORKSPACE_ROOT, PUBLIC_DIR);
 const PUBLIC_IGNORE_DIRS = ["uploads"];
 let previousRouteFiles: string[] = [];
 let lastChangedFile: string | null = null;
+let shuttingDown = false;
 
 let pythonPort = 0;
 let bsPort = 0;
@@ -173,7 +175,9 @@ const pipeline = new DebouncedWorker(
       if (isReady && bs.active) {
         bs.reload();
       } else {
-        console.error(chalk.red("⚠ Server failed to start or timed out."));
+        console.error(
+          chalk.red("Warning: Server failed to start or timed out."),
+        );
       }
       return;
     }
@@ -199,7 +203,7 @@ const pipeline = new DebouncedWorker(
       if (previousRouteFiles.length > 0 && routesChanged) {
         console.log(
           chalk.yellow(
-            "→ Structure changed (New/Deleted file), restarting Python server...",
+            "-> Structure changed (New/Deleted file), restarting Python server...",
           ),
         );
         await restartPythonServer(pythonPort, bsPort);
@@ -238,12 +242,47 @@ function isIgnoredPublicPath(absPath: string): boolean {
 
 const publicPipeline = new DebouncedWorker(
   async () => {
-    console.log(chalk.cyan("→ Public directory changed, reloading browser..."));
+    console.log(
+      chalk.cyan("-> Public directory changed, reloading browser..."),
+    );
     if (bs.active) bs.reload();
   },
   350,
   "bs-public-pipeline",
 );
+
+type ClosableWatcher = {
+  close: () => Promise<void>;
+};
+
+const sourceWatchers: ClosableWatcher[] = [];
+
+async function closeWatchers(): Promise<void> {
+  await Promise.all(
+    sourceWatchers.splice(0).map(async (watcher) => {
+      try {
+        await watcher.close();
+      } catch {}
+    }),
+  );
+}
+
+async function shutdown(exitCode: number): Promise<void> {
+  if (shuttingDown) {
+    return;
+  }
+
+  shuttingDown = true;
+
+  await closeWatchers();
+
+  if (bs.active) {
+    bs.exit();
+  }
+
+  stopPythonServer();
+  process.exit(exitCode);
+}
 
 (async () => {
   const reservedPorts = getReservedPorts();
@@ -253,77 +292,90 @@ const publicPipeline = new DebouncedWorker(
 
   updateRouteFilesCache();
 
-  createSrcWatcher(join(SRC_DIR, "**", "*"), {
-    onEvent: (_ev, _abs, rel) => {
-      if (rel.includes("__pycache__") || rel.endsWith(".pyc")) return;
-      lastChangedFile = rel;
-      pipeline.schedule(rel);
-    },
-    awaitWriteFinish: DEFAULT_AWF,
-    logPrefix: "watch-src",
-    usePolling: true,
-    interval: 1000,
-  });
+  sourceWatchers.push(
+    createSrcWatcher(join(SRC_DIR, "**", "*"), {
+      onEvent: (_ev, _abs, rel) => {
+        if (rel.includes("__pycache__") || rel.endsWith(".pyc")) return;
+        lastChangedFile = rel;
+        pipeline.schedule(rel);
+      },
+      awaitWriteFinish: DEFAULT_AWF,
+      logPrefix: "watch-src",
+      usePolling: true,
+      interval: 1000,
+    }),
+  );
 
-  createSrcWatcher(join(PUBLIC_DIR, "**", "*"), {
-    onEvent: (_ev, abs, _) => {
-      const relFromPublic = relative(PUBLIC_ROOT, abs).replace(/\\/g, "/");
-      if (isIgnoredPublicPath(abs)) return;
-      publicPipeline.schedule(relFromPublic);
-    },
-    awaitWriteFinish: DEFAULT_AWF,
-    logPrefix: "watch-public",
-    usePolling: true,
-    interval: 1000,
-  });
+  sourceWatchers.push(
+    createSrcWatcher(join(PUBLIC_DIR, "**", "*"), {
+      onEvent: (_ev, abs, _) => {
+        const relFromPublic = relative(PUBLIC_ROOT, abs).replace(/\\/g, "/");
+        if (isIgnoredPublicPath(abs)) return;
+        publicPipeline.schedule(relFromPublic);
+      },
+      awaitWriteFinish: DEFAULT_AWF,
+      logPrefix: "watch-public",
+      usePolling: true,
+      interval: 1000,
+    }),
+  );
 
   const viteFlagFile = join(__dirname, "..", ".casp", ".vite-build-complete");
   mkdirSync(dirname(viteFlagFile), { recursive: true });
   if (!existsSync(viteFlagFile)) writeFileSync(viteFlagFile, "0");
 
-  createSrcWatcher(viteFlagFile, {
-    onEvent: (ev) => {
-      if (ev === "change" && bs.active) {
-        bs.reload();
-      }
-    },
-    awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
-    logPrefix: "watch-vite",
-    usePolling: true,
-    interval: 500,
-  });
+  sourceWatchers.push(
+    createSrcWatcher(viteFlagFile, {
+      onEvent: (ev) => {
+        if (ev === "change" && bs.active) {
+          bs.reload();
+        }
+      },
+      awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
+      logPrefix: "watch-vite",
+      usePolling: true,
+      interval: 500,
+    }),
+  );
 
-  createSrcWatcher(join(__dirname, "..", "utils", "**", "*.py"), {
-    onEvent: async (_ev, _abs, _) => {
-      if (_abs.includes("__pycache__")) return;
-      await restartPythonServer(pythonPort, bsPort);
-      const isReady = await waitForPort(pythonPort);
-      if (isReady && bs.active) bs.reload();
-    },
-    awaitWriteFinish: DEFAULT_AWF,
-    logPrefix: "watch-utils",
-    usePolling: true,
-    interval: 1000,
-  });
+  sourceWatchers.push(
+    createSrcWatcher(join(__dirname, "..", "utils", "**", "*.py"), {
+      onEvent: async (_ev, _abs, _) => {
+        if (_abs.includes("__pycache__")) return;
+        await restartPythonServer(pythonPort, bsPort);
+        const isReady = await waitForPort(pythonPort);
+        if (isReady && bs.active) bs.reload();
+      },
+      awaitWriteFinish: DEFAULT_AWF,
+      logPrefix: "watch-utils",
+      usePolling: true,
+      interval: 1000,
+    }),
+  );
 
-  createSrcWatcher(join(__dirname, "..", "main.py"), {
-    onEvent: async (_ev, _abs, _) => {
-      if (_abs.includes("__pycache__")) return;
-      await restartPythonServer(pythonPort, bsPort);
-      const isReady = await waitForPort(pythonPort);
-      if (isReady && bs.active) bs.reload();
-    },
-    awaitWriteFinish: DEFAULT_AWF,
-    logPrefix: "watch-main",
-    usePolling: true,
-    interval: 1000,
-  });
+  sourceWatchers.push(
+    createSrcWatcher(join(__dirname, "..", "main.py"), {
+      onEvent: async (_ev, _abs, _) => {
+        if (_abs.includes("__pycache__")) return;
+        await restartPythonServer(pythonPort, bsPort);
+        const isReady = await waitForPort(pythonPort);
+        if (isReady && bs.active) bs.reload();
+      },
+      awaitWriteFinish: DEFAULT_AWF,
+      logPrefix: "watch-main",
+      usePolling: true,
+      interval: 1000,
+    }),
+  );
 
   startPythonServer(pythonPort, bsPort);
 
   bs.init(
     {
-      proxy: `http://localhost:${pythonPort}`,
+      proxy: {
+        target: `http://localhost:${pythonPort}`,
+        ws: true,
+      },
       port: bsPort,
       online: true,
       middleware: [
@@ -356,7 +408,7 @@ const publicPipeline = new DebouncedWorker(
       const uiExtUrl = urls.get("ui-external");
 
       console.log("");
-      console.log(chalk.green.bold("✔ Ports Configured:"));
+      console.log(chalk.green.bold("OK Ports Configured:"));
       console.log(
         `  ${chalk.blue.bold("Frontend (BrowserSync):")} ${chalk.magenta(localUrl)}`,
       );
@@ -394,3 +446,21 @@ const publicPipeline = new DebouncedWorker(
     },
   );
 })();
+
+process.once("SIGINT", () => {
+  void shutdown(0);
+});
+
+process.once("SIGTERM", () => {
+  void shutdown(0);
+});
+
+process.once("uncaughtException", (error) => {
+  console.error(error);
+  void shutdown(1);
+});
+
+process.once("unhandledRejection", (reason) => {
+  console.error(reason);
+  void shutdown(1);
+});

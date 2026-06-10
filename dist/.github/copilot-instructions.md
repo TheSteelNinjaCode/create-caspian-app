@@ -14,12 +14,13 @@
 
 - Use this decision order: `caspian.config.json` for optional feature enablement, app runtime and app-owned code for current project behavior, matching workspace instruction files under `.github/instructions/**/*.instructions.md` for task-specific implementation guidance, installed `casp` runtime for framework internals, and packaged markdown docs for Caspian feature discovery and task routing.
 - As the app grows, prefer `src/components/` for reusable application UI and reserve `src/lib/` for reusable non-UI code such as services, validators, adapters, and shared helpers.
-- Read `./caspian.config.json` almost immediately before making feature, tooling, scaffolding, or file-placement decisions. Treat it as the workspace feature gate for flags such as `backendOnly`, `tailwindcss`, `mcp`, `prisma`, `typescript`, and `componentScanDirs`.
+- Read `./caspian.config.json` almost immediately before making feature, tooling, scaffolding, or file-placement decisions. Treat it as the workspace feature gate for flags such as `backendOnly`, `tailwindcss`, `mcp`, `prisma`, `typescript`, `websocket`, and `componentScanDirs`.
 - Treat `caspian.config.json` as the single source of truth for whether optional Caspian features are enabled in the current workspace. Use feature-specific docs, files, and commands only after the matching flag is confirmed as enabled.
 - If a feature is disabled and the user wants it, ask whether they want to enable it first, then update `caspian.config.json` and follow `npx casp update project` so framework-managed files align with the new feature set.
 - When `.github/instructions/**/*.instructions.md` files exist, treat them as workspace-local file instructions for specific libraries, component systems, icon sets, integrations, and implementation rules. Read the matching instruction before deciding how to implement work in that area, but do not let it override `caspian.config.json`, app code, or installed runtime behavior.
 - Treat `node_modules/caspian-utils/dist/docs/**` as packaged Caspian docs that teach AI how Caspian features work and where to look next. Their presence does not mean the feature is enabled in the current project.
 - Use `node_modules/caspian-utils/dist/docs/pulsepoint-runtime-map.md` for fast PulsePoint feature lookup before editing browser-side behavior or generating advanced PulsePoint patterns.
+- Use `node_modules/caspian-utils/dist/docs/websockets.md` before changing FastAPI WebSocket endpoints, socket origin checks, socket auth/session behavior, broadcast managers, or native browser `WebSocket` clients.
 - For current repo behavior, trust `main.py`, `src/lib/**`, `public/js/**`, `prisma/**`, and `src/app/**` over generic Caspian docs.
 - For framework internals, trust `.venv/Lib/site-packages/casp/**` over generic or older upstream guidance.
 - When packaged docs conflict with project code or installed runtime, the project code, `caspian.config.json`, and installed runtime win. Keep the packaged docs feature-oriented and point AI back to the project files that decide actual enablement and behavior.
@@ -47,6 +48,8 @@
 - When `caspian.config.json` has `tailwindcss: true`, treat Python `merge_classes(...)` plus browser `twMerge(...)` as the only Tailwind class-merging contract: `merge_classes(...)` emits frontend-ready `{twMerge(...)}` expressions, and authored PulsePoint attribute expressions or scripts may call global `twMerge(...)` directly.
 - Treat Caspian component usage as HTML-first in the current runtime: import Python components with `<!-- @import ... -->` and render them as kebab-cased `x-*` tags such as `<x-button />` or `<x-command-dialog />`.
 - For CRUD operations and any browser-initiated reads from the backend, use route or backend `@rpc()` actions on the server and `pp.rpc(...)` from PulsePoint code on the client unless the user explicitly asks for another integration pattern.
+- For live bidirectional channels, first confirm `caspian.config.json` has `websocket: true`, then use app-owned FastAPI WebSocket endpoints in `main.py` plus native browser `WebSocket` clients inside the owning PulsePoint route template. Do not replace normal CRUD, form submits, uploads, or one-way progress streams with WebSockets.
+- When `caspian.config.json` has `websocket: true`, WebSocket endpoint paths are project-defined in `main.py`; do not assume any default socket path or route folder exists in every Caspian project. Keep shared socket helpers under `src/lib/websocket/**` when session extraction, auth payload validation, connection tracking, or broadcast behavior is reused.
 - For route creation, keep page markup in `src/app/**/index.html`. If a route is UI-only, `index.html` alone is sufficient. Add `src/app/**/index.py` only as a companion when the same route needs metadata, `page()`, `@rpc()` actions, auth checks, caching, redirects, or other server-side behavior. Keep shared section wrappers in `layout.html` and use `layout.py` only for shared props or metadata. Do not place route HTML in `index.py` or layout HTML in `layout.py`; use a lone `index.py` only for non-visual routes such as redirect-only or action-only handlers.
 - Keep route-specific logic in that route's `index.py`. Move code into `src/lib/**` only when it is genuinely reusable across routes, components, integrations, or features; do not extract one-route orchestration just to make it look generic.
 - Treat the single-root template contract as a hard requirement, not a style preference: every authored route, layout, and component HTML file must have exactly one parent HTML element or one imported `x-*` component tag as its root. Do not leave sibling top-level markup, and do not place a `<script>` after the root element. If a script is needed, keep it inside that same root.
@@ -77,11 +80,13 @@
 ### `main.py`
 
 - Treat `main.py` as the repo source of truth for FastAPI setup, auth bootstrap, middleware wiring, route registration, cache defaults, and error handlers.
+- Treat `main.py` as the source of truth for app-owned WebSocket endpoints, origin validation, idle timeouts, maximum socket message size, JSON message handling, close codes, and broadcast-channel wiring.
 - When the app factors response-header hardening or safe static-file behavior into app-owned helpers, treat `main.py` plus those imported helpers as the runtime source of truth together.
 - Preserve the effective middleware execution order unless the task explicitly changes request semantics: `SecurityHeadersMiddleware -> SessionMiddleware -> CSRFMiddleware -> AuthMiddleware -> RPCMiddleware`.
 - Do not move normal file upload or file-manager behavior into `main.py`; keep those actions in the owning route `index.py` and shared helpers in `src/lib/**`.
 - Document route param behavior exactly as implemented here.
 - Do not use `main.py` alone to infer whether optional features are enabled; confirm that in `caspian.config.json` first.
+- Before changing WebSocket behavior, verify `cfg.websocket`, the app's endpoint registration, origin allow-list logic, session/auth checks, idle timeout, maximum message size, close codes, and connection cleanup. HTTP-only middleware does not automatically protect `scope["type"] == "websocket"` connections.
 
 ### `src/lib/**/*.py`
 
@@ -92,6 +97,7 @@
 - When `caspian.config.json` has `mcp: true`, keep app-owned MCP tools in `src/lib/mcp/mcp_server.py` and keep the default FastMCP config in `src/lib/mcp/fastmcp.json`. If those locations change, update `settings/restart-mcp.ts` and the MCP docs together.
 - Keep auth policy in `src/lib/auth/auth_config.py`. Keep auth bootstrap and middleware order changes in `main.py`.
 - Do not recreate or customize `src/lib/security/runtime_security.py` for normal application work. Runtime security helpers are package-owned in `casp.runtime_security`; app-specific policy should live in app-owned config or route/helper code instead.
+- Keep reusable WebSocket helpers under `src/lib/websocket/**` when they are shared across socket endpoints or route clients. Common shared helpers include session extraction, authenticated payload checks, origin utilities, connection managers, payload normalization, and broadcast fan-out.
 
 ### `src/components/**/*.py`
 
@@ -128,6 +134,8 @@
 - For dashboard, admin, or grouped sections with multiple child routes, prefer folder-level `layout.html` wrappers in `src/app/**` instead of repeating the same shell in each child route.
 - For grouped shells with independent sidebar and content scrolling, mark the content pane with `pp-reset-scroll="true"` when that pane should start at the top on each child-route navigation. Do not put the attribute on the whole shell when the sidebar or rail should retain its own scroll.
 - For upload managers and similar interactive lists, prefer `pp.state(...)` plus `pp-for` over manual DOM painting so rerenders keep the list stable.
+- For route-owned WebSocket clients, use PulsePoint state, refs, and cleanup effects around the native `WebSocket`. Keep the socket object in `pp.ref(...)`, close it on component disposal, and keep socket event listeners inside the owning route template script.
+- Do not assume WebSocket clients live in a dashboard or any fixed route. Put the browser client in whichever route owns that live experience, pass first-render socket values from the matching `index.py`, and use route auth policy plus WebSocket endpoint auth checks intentionally for public, private, or mixed channels.
 - Do not assume React, Vue, JSX-first component syntax, HTMX, or another frontend runtime unless the user explicitly requests one.
 
 ### `prisma/**`
@@ -159,6 +167,7 @@
 - These files are the packaged Caspian documentation layer, not the runtime and not the source of current workspace state.
 - Use them to help AI answer three questions: which Caspian feature applies, which project files should be inspected next, and which workflow is appropriate once the feature is confirmed as enabled.
 - Use `node_modules/caspian-utils/dist/docs/file-conventions.md` when deciding what belongs in `index.html`, `index.py`, `layout.html`, `layout.py`, `loading.html`, `not-found.html`, or `error.html`.
+- Use `node_modules/caspian-utils/dist/docs/websockets.md` when deciding how to document or implement app-owned FastAPI WebSockets, browser `WebSocket` clients, origin checks, auth/session checks, message contracts, and the choice between WebSockets, RPC, and SSE.
 - Verify behavior claims in this order:
   1.  `caspian.config.json`, then `main.py`, `src/lib/**`, `public/js/**`, `prisma/**`, `src/app/**`
   2.  `.venv/Lib/site-packages/casp/**`

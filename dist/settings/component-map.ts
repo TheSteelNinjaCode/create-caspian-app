@@ -981,7 +981,7 @@ function analyzeFile(filePath: string, rootDir: string): ComponentMetadata[] {
 
 function loadConfig(): CaspianConfig {
   if (!fs.existsSync(CONFIG_PATH)) {
-    console.error(`❌ Configuration file not found at: ${CONFIG_PATH}`);
+    console.error(`Error: Configuration file not found at: ${CONFIG_PATH}`);
     process.exit(1);
   }
   return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
@@ -1024,7 +1024,7 @@ function walkDirectory(
  */
 
 export async function componentMap() {
-  console.log(`🔍 Starting Component Analysis (Lezer AST-first)...`);
+  console.log("Starting Component Analysis (Lezer AST-first)...");
   const config = loadConfig();
   let allFiles: string[] = [];
 
@@ -1036,7 +1036,7 @@ export async function componentMap() {
     );
   });
 
-  console.log(`📂 Found ${allFiles.length} Python files.`);
+  console.log(`Found ${allFiles.length} Python files.`);
   const componentRegistry: ComponentMetadata[] = [];
 
   allFiles.forEach((file) => {
@@ -1044,15 +1044,15 @@ export async function componentMap() {
       const foundComponents = analyzeFile(file, PROJECT_ROOT);
       componentRegistry.push(...foundComponents);
     } catch (e) {
-      console.warn(`⚠️ Failed to parse ${file}:`, e);
+      console.warn(`Warning: Failed to parse ${file}:`, e);
     }
   });
 
-  console.log(`✅ Discovered ${componentRegistry.length} Components.`);
+  console.log(`Discovered ${componentRegistry.length} Components.`);
 
   const outputPath = path.join(__dirname, "component-map.json");
   if (componentRegistry.length > 0 || !fs.existsSync(outputPath)) {
     fs.writeFileSync(outputPath, JSON.stringify(componentRegistry, null, 2));
-    console.log(`📝 Component map written to: ${outputPath}`);
+    console.log(`Component map written to: ${outputPath}`);
   }
 }
