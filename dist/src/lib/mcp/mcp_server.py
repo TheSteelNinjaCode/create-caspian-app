@@ -15,9 +15,9 @@ COMPONENT_MAP_PATH = PROJECT_ROOT / "settings" / "component-map.json"
 
 
 mcp = FastMCP(
-    name="Mapka MCP",
+    name="Caspian MCP",
     instructions=(
-        "Read-only workspace metadata for the Mapka Caspian application. "
+        "Read-only workspace metadata for the Caspian application. "
         "Use these tools for project configuration, generated file inventory, and component discovery."
     ),
 )
