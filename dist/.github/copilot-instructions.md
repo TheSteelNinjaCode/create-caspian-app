@@ -10,6 +10,17 @@
 - When packaged docs need to point AI from a feature guide to the controlling runtime file, prefer `node_modules/caspian-utils/dist/docs/core-runtime-map.md` instead of duplicating the full module map in multiple pages.
 - When packaged docs need to point AI from a PulsePoint feature or directive to the controlling browser behavior, prefer `node_modules/caspian-utils/dist/docs/pulsepoint-runtime-map.md` instead of duplicating the full browser feature map in multiple pages.
 
+## Component-First Page Composition (Highest Priority)
+
+This is the top architectural requirement for this workspace. Treat it as a hard rule that outranks convenience, and apply it before writing any route, layout, or page markup.
+
+- Build pages from components, not from one large block of HTML. A route's `src/app/**/index.html` should read like a short composition of `x-*` component tags, not a wall of markup. When a page would otherwise carry a long stretch of HTML, that markup must move into a component instead of living in the page.
+- Separate every page into meaningful chunks and give each chunk its own component. Typical chunks are a top menu / topbar, header, sidebar / nav rail, hero, toolbar, content sections, cards, lists, forms, footer, and any repeated block. Each chunk owns its own long markup inside its component file, so the page content stays small and readable.
+- Default to single-file Python components authored with inline `html(...)` (import `html` from `casp.component_decorator`, return `html("""...""", **context)`). Keep the chunk's markup, server interpolation, and any PulsePoint `<script>` inside that one Python file. Move to a thin `.py` plus same-name `.html` via `render_html(...)` only when the markup is very large or the script carries heavy logic.
+- Put these page-chunk components in `src/components/` (or a route-local component folder when they are truly single-route), import them into the route with a top-level `<!-- @import ... -->` directive or a real Python import, and render them as kebab-cased `x-*` tags. Keep the single-root contract in both the page and each component.
+- When the user asks to build or extend a page, plan the chunk breakdown first (for example: top menu component, sidebar component, content section component), create those components, then assemble them in the route. Do not start by pasting a full HTML page into `index.html` and only later consider extraction; component-first is the starting point, not a cleanup step.
+- If you find an existing page with a large inline HTML body, prefer splitting it into chunk components as part of the work rather than adding more inline markup to it.
+
 ## Global Rules
 
 - Use this decision order: `caspian.config.json` for optional feature enablement, app runtime and app-owned code for current project behavior, matching workspace instruction files under `.github/instructions/**/*.instructions.md` for task-specific implementation guidance, installed `casp` runtime for framework internals, and packaged markdown docs for Caspian feature discovery and task routing.
@@ -103,7 +114,7 @@
 
 ### `src/components/**/*.py`
 
-- Keep `src/components/` as the default home for reusable application UI components.
+- Keep `src/components/` as the default home for reusable application UI components and for the page chunks produced by component-first composition (top menus, sidebars, headers, content sections, cards, lists, forms, footers).
 - Move shared cards, forms, shells, navigation, and other reusable rendered building blocks here once they are used across routes or features.
 - Keep route-owned markup in `src/app/**`, and keep non-UI helpers or services in `src/lib/**`.
 - Author components as a single Python file with inline `html(...)` by default for small and medium UI, or as a `.py` plus same-name `.html` via `render_html(...)` for large markup or long scripts. Keep the single-root rule in both forms. Resolve child `x-*` tags from real Python imports in single-file components rather than `<!-- @import ... -->`. See `node_modules/caspian-utils/dist/docs/components.md`.
@@ -123,6 +134,7 @@
 
 ### `src/app/**/*.html`
 
+- Compose pages from components first (see "Component-First Page Composition"). Keep `index.html` a short assembly of `x-*` chunk components (top menu, sidebar, content sections, cards, forms, footer, and other repeated blocks) instead of a long inline HTML body. When a route would carry a long stretch of markup, move that markup into a single-file `html(...)` component and render it as an `x-*` tag here.
 - Keep route templates and layouts server-rendered first, with PulsePoint enhancement as the default interactive layer.
 - Keep visible page and layout markup in `index.html` and `layout.html`. Treat `index.py` and `layout.py` as backend companions for metadata, `page()` or `layout()`, `@rpc()` actions, auth checks, caching, redirects, and other server-side preparation, not as places to author visible HTML.
 - When a route renders UI, author that markup in the route's `index.html` even if the route also has an `index.py` companion.
