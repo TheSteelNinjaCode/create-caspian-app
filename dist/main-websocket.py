@@ -25,7 +25,6 @@ from casp.auth import (
     GoogleProvider,
     GithubProvider,
     configure_auth,
-    auth,
 )
 from casp.rpc import register_rpc_routes
 from casp.layout import (
@@ -38,7 +37,7 @@ from casp.layout import (
 )
 import hashlib
 from casp.streaming import SSE
-from typing import Any, Optional, get_args, get_origin, Union
+from typing import Any, AsyncGenerator, Generator, Optional, cast, get_args, get_origin, Union
 from urllib.parse import urlparse
 from src.lib.auth.auth_config import build_auth_settings
 from casp.runtime_security import (
@@ -605,6 +604,7 @@ async def websocket_live_endpoint(websocket: WebSocket):
         "Private WebSocket connected.",
     )
 
+
 @app.websocket(PUBLIC_WEBSOCKET_PATH)
 async def websocket_public_endpoint(websocket: WebSocket):
     if not _is_websocket_origin_allowed(websocket):
@@ -797,7 +797,7 @@ def register_single_route(url_pattern: str, file_path: str):
                 return result
 
             if inspect.isasyncgen(result) or inspect.isgenerator(result):
-                return SSE(result)
+                return SSE(cast("AsyncGenerator | Generator", result))
 
             cache_settings = getattr(module, 'cache_settings', None)
             if cache_settings:
