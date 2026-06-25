@@ -9,7 +9,14 @@ import traceback
 import json
 import time
 from pathlib import Path
-from fastapi import FastAPI, Request, Response
+from fastapi import (
+    FastAPI,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse
 from starlette.datastructures import MutableHeaders
 from starlette.middleware.sessions import SessionMiddleware
@@ -55,7 +62,9 @@ cfg = get_config()
 # ====
 mcp_app = None
 if cfg.mcp:
-    from src.lib.mcp.mcp_server import mcp
+    # Optional, feature-gated module: only generated when mcp is enabled in
+    # caspian.config.json, so suppress the static "module not found" check.
+    from src.lib.mcp.mcp_server import mcp  # type: ignore[import-not-found]
     # Inner path "/" so the mount prefix below is the full endpoint path.
     mcp_app = mcp.http_app(path="/")
 
@@ -77,6 +86,8 @@ app = FastAPI(
     docs_url="/docs" if cfg.backendOnly else None,
     redoc_url="/redoc" if cfg.backendOnly else None,
     openapi_url="/openapi.json" if cfg.backendOnly else None,
+    # FastMCP's streamable-HTTP transport starts its session manager in its
+    # lifespan; FastAPI must run it or MCP requests fail at runtime.
     lifespan=mcp_app.lifespan if mcp_app is not None else None,
 )
 
@@ -434,6 +445,187 @@ class RequestDiagnosticsMiddleware:
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
                 print(
                     f"[request:end] {method} {path} {elapsed_ms}ms", flush=True)
+
+
+# ====
+# WebSocket Routes (optional - gated by caspian.config.json `websocket`)
+# ====
+WEBSOCKET_PATH = "/ws/live"
+PUBLIC_WEBSOCKET_PATH = "/ws/public"
+WEBSOCKET_IDLE_TIMEOUT_SECONDS = max(
+    10,
+    int(os.getenv('WEBSOCKET_IDLE_TIMEOUT_SECONDS', 120)),
+)
+MAX_WEBSOCKET_MESSAGE_BYTES = max(
+    256,
+    int(os.getenv('MAX_WEBSOCKET_MESSAGE_BYTES', 4096)),
+)
+
+
+def _normalized_origin(value: str) -> str:
+    return (value or "").strip().rstrip("/")
+
+
+def _configured_websocket_origins() -> set[str]:
+    raw_values = []
+    for env_name in (
+        "WEBSOCKET_ALLOWED_ORIGINS",
+        "CORS_ALLOWED_ORIGINS",
+        "APP_BASE_URL",
+    ):
+        raw_values.extend(os.getenv(env_name, "").split(","))
+
+    return {
+        _normalized_origin(origin)
+        for origin in raw_values
+        if _normalized_origin(origin)
+    }
+
+
+def _websocket_same_origin(websocket: WebSocket) -> str:
+    scheme = "https" if websocket.url.scheme == "wss" else "http"
+    return _normalized_origin(f"{scheme}://{websocket.url.netloc}")
+
+
+def _is_websocket_origin_allowed(websocket: WebSocket) -> bool:
+    origin = _normalized_origin(websocket.headers.get("origin", ""))
+    if not origin:
+        return not IS_PRODUCTION
+
+    parsed_origin = urlparse(origin)
+    if not parsed_origin.scheme or not parsed_origin.netloc:
+        return False
+
+    if not IS_PRODUCTION and parsed_origin.hostname in {"localhost", "127.0.0.1"}:
+        return parsed_origin.scheme == "http"
+
+    allowed_origins = _configured_websocket_origins()
+    allowed_origins.add(_websocket_same_origin(websocket))
+    return origin in allowed_origins
+
+
+async def _run_websocket_channel(
+    websocket: WebSocket,
+    manager: Any,
+    payload: dict[str, Any] | None,
+    ready_message: str,
+):
+    await manager.connect(websocket)
+    ready_payload: dict[str, Any] = {
+        "type": "ready",
+        "message": ready_message,
+    }
+    if payload is not None:
+        ready_payload["payload"] = payload
+    await websocket.send_json(ready_payload)
+
+    try:
+        while True:
+            try:
+                raw_message = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=WEBSOCKET_IDLE_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
+                return
+
+            if len(raw_message.encode("utf-8")) > MAX_WEBSOCKET_MESSAGE_BYTES:
+                await websocket.close(code=status.WS_1009_MESSAGE_TOO_BIG)
+                return
+
+            try:
+                message = json.loads(raw_message)
+            except json.JSONDecodeError:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Messages must be valid JSON.",
+                })
+                continue
+
+            if not isinstance(message, dict):
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Messages must be JSON objects.",
+                })
+                continue
+
+            message_type = str(message.get("type", "message"))
+            if message_type == "ping":
+                await websocket.send_json({"type": "pong", "time": int(time.time())})
+                continue
+
+            text = str(message.get("text", "")).strip()
+            if not text:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Message text is required.",
+                })
+                continue
+
+            outgoing_payload: dict[str, Any] = {
+                "type": "message",
+                "text": text[:1000],
+                "time": int(time.time()),
+            }
+            if payload is not None:
+                outgoing_payload["payload"] = payload
+            await manager.broadcast_json(outgoing_payload)
+    except WebSocketDisconnect:
+        return
+    finally:
+        manager.disconnect(websocket)
+
+
+if cfg.websocket:
+    # Optional, feature-gated module: only generated when websocket is enabled
+    # in caspian.config.json, so suppress the static "module not found" check.
+    from src.lib.websocket.websocket_security import (  # type: ignore[import-not-found]
+        get_authenticated_payload_from_session,
+        get_websocket_session,
+        public_websocket_connections,
+        websocket_connections,
+    )
+
+    @app.websocket(WEBSOCKET_PATH)
+    async def websocket_live_endpoint(websocket: WebSocket):
+        if not _is_websocket_origin_allowed(websocket):
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+        session = get_websocket_session(websocket)
+        user_payload = get_authenticated_payload_from_session(
+            session,
+            Auth.get_instance(),
+        )
+        if user_payload is None:
+            await websocket.accept()
+            await websocket.send_json({
+                "type": "error",
+                "message": "Authentication required.",
+            })
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+        await _run_websocket_channel(
+            websocket,
+            websocket_connections,
+            None,
+            "Private WebSocket connected.",
+        )
+
+    @app.websocket(PUBLIC_WEBSOCKET_PATH)
+    async def websocket_public_endpoint(websocket: WebSocket):
+        if not _is_websocket_origin_allowed(websocket):
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+        await _run_websocket_channel(
+            websocket,
+            public_websocket_connections,
+            {"guest": True, "scope": "public"},
+            "Public WebSocket connected.",
+        )
 
 # ====
 # Route Registration
