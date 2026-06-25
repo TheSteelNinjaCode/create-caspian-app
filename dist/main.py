@@ -51,6 +51,15 @@ load_dotenv()
 cfg = get_config()
 
 # ====
+# MCP SERVER (mounted into this app so one deploy serves web + MCP)
+# ====
+mcp_app = None
+if cfg.mcp:
+    from src.lib.mcp.mcp_server import mcp
+    # Inner path "/" so the mount prefix below is the full endpoint path.
+    mcp_app = mcp.http_app(path="/")
+
+# ====
 # AUTH CONFIGURATION (App behavior - customize here)
 # ====
 
@@ -68,6 +77,7 @@ app = FastAPI(
     docs_url="/docs" if cfg.backendOnly else None,
     redoc_url="/redoc" if cfg.backendOnly else None,
     openapi_url="/openapi.json" if cfg.backendOnly else None,
+    lifespan=mcp_app.lifespan if mcp_app is not None else None,
 )
 
 
@@ -697,6 +707,10 @@ def register_single_route(url_pattern: str, file_path: str):
 
 register_routes()
 register_rpc_routes(app)
+
+# Mount the FastMCP app at /mcp so the endpoint is exactly /mcp.
+if mcp_app is not None:
+    app.mount("/mcp", mcp_app)
 
 # ====
 # Custom Exception Handlers (404 & 500)
