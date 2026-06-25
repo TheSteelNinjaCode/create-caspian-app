@@ -182,6 +182,11 @@ REQUEST_TIMEOUT_SECONDS = max(
     1.0,
     float(os.getenv('CASPIAN_REQUEST_TIMEOUT_SECONDS', 20)),
 )
+# Path prefixes that serve long-lived streaming responses (SSE, etc.) and must
+# not be subject to the per-request timeout. The MCP streamable-HTTP transport
+# keeps GET /mcp/ open indefinitely; wrapping it in asyncio.wait_for cancels the
+# stream mid-response and corrupts the ASGI message sequence.
+STREAMING_PATH_PREFIXES = ('/mcp',)
 MAX_CONTENT_LENGTH_BYTES = max(1, MAX_CONTENT_LENGTH_MB) * 1024 * 1024
 
 
@@ -486,6 +491,12 @@ class RequestDiagnosticsMiddleware:
         if should_log and not IS_PRODUCTION:
             print(f"[request:start] {method} {path}", flush=True)
 
+        # Long-lived streaming endpoints (MCP SSE) must bypass the timeout, or
+        # asyncio.wait_for cancels the stream and the ASGI send sequence breaks.
+        if path.startswith(STREAMING_PATH_PREFIXES):
+            await self.app(scope, receive, send)
+            return
+
         try:
             await asyncio.wait_for(
                 self.app(scope, receive, send),
@@ -534,48 +545,6 @@ MAX_WEBSOCKET_MESSAGE_BYTES = max(
     256,
     int(os.getenv('MAX_WEBSOCKET_MESSAGE_BYTES', 4096)),
 )
-
-
-def _normalized_origin(value: str) -> str:
-    return (value or "").strip().rstrip("/")
-
-
-def _configured_websocket_origins() -> set[str]:
-    raw_values = []
-    for env_name in (
-        "WEBSOCKET_ALLOWED_ORIGINS",
-        "CORS_ALLOWED_ORIGINS",
-        "APP_BASE_URL",
-    ):
-        raw_values.extend(os.getenv(env_name, "").split(","))
-
-    return {
-        _normalized_origin(origin)
-        for origin in raw_values
-        if _normalized_origin(origin)
-    }
-
-
-def _websocket_same_origin(websocket: WebSocket) -> str:
-    scheme = "https" if websocket.url.scheme == "wss" else "http"
-    return _normalized_origin(f"{scheme}://{websocket.url.netloc}")
-
-
-def _is_websocket_origin_allowed(websocket: WebSocket) -> bool:
-    origin = _normalized_origin(websocket.headers.get("origin", ""))
-    if not origin:
-        return not IS_PRODUCTION
-
-    parsed_origin = urlparse(origin)
-    if not parsed_origin.scheme or not parsed_origin.netloc:
-        return False
-
-    if not IS_PRODUCTION and parsed_origin.hostname in {"localhost", "127.0.0.1"}:
-        return parsed_origin.scheme == "http"
-
-    allowed_origins = _configured_websocket_origins()
-    allowed_origins.add(_websocket_same_origin(websocket))
-    return origin in allowed_origins
 
 
 async def _run_websocket_channel(
@@ -655,30 +624,20 @@ if cfg.websocket:
     # Optional, feature-gated module: only generated when websocket is enabled
     # in caspian.config.json, so suppress the static "module not found" check.
     from src.lib.websocket.websocket_security import (  # type: ignore[import-not-found]
-        get_authenticated_payload_from_session,
-        get_websocket_session,
+        authorize_websocket,
         public_websocket_connections,
         websocket_connections,
     )
 
+    # Both endpoints share ONE guard (`authorize_websocket`) that delegates to
+    # Caspian's `Auth`, and ONE transport loop (`_run_websocket_channel`). They
+    # differ only by auth policy and broadcast pool. To role-gate a channel,
+    # pass `roles=[...]`; to add another channel, add an endpoint that calls the
+    # same guard.
+
     @app.websocket(WEBSOCKET_PATH)
     async def websocket_live_endpoint(websocket: WebSocket):
-        if not _is_websocket_origin_allowed(websocket):
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
-
-        session = get_websocket_session(websocket)
-        user_payload = get_authenticated_payload_from_session(
-            session,
-            Auth.get_instance(),
-        )
-        if user_payload is None:
-            await websocket.accept()
-            await websocket.send_json({
-                "type": "error",
-                "message": "Authentication required.",
-            })
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        if await authorize_websocket(websocket, require_auth=True) is None:
             return
 
         await _run_websocket_channel(
@@ -690,8 +649,7 @@ if cfg.websocket:
 
     @app.websocket(PUBLIC_WEBSOCKET_PATH)
     async def websocket_public_endpoint(websocket: WebSocket):
-        if not _is_websocket_origin_allowed(websocket):
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        if await authorize_websocket(websocket, require_auth=False) is None:
             return
 
         await _run_websocket_channel(

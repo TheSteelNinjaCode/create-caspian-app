@@ -101,7 +101,8 @@ This is the top architectural requirement for this workspace. Treat it as a hard
 - Do not move normal file upload or file-manager behavior into `main.py`; keep those actions in the owning route `index.py` and shared helpers in `src/lib/**`.
 - Document route param behavior exactly as implemented here.
 - Do not use `main.py` alone to infer whether optional features are enabled; confirm that in `caspian.config.json` first.
-- Before changing WebSocket behavior, verify `cfg.websocket`, the app's endpoint registration, origin allow-list logic, session/auth checks, idle timeout, maximum message size, close codes, and connection cleanup. HTTP-only middleware does not automatically protect `scope["type"] == "websocket"` connections.
+- Before changing WebSocket behavior, verify `cfg.websocket`, the app's endpoint registration, the `authorize_websocket(...)` guard in `src/lib/websocket/websocket_security.py`, idle timeout, maximum message size, close codes, and connection cleanup. HTTP-only middleware does not automatically protect `scope["type"] == "websocket"` connections, so socket auth lives in that guard, not `AuthMiddleware`.
+- Authorize sockets with the single `authorize_websocket(...)` guard, which runs the origin check then delegates to Caspian `Auth` (`Auth.set_request(websocket)` + `is_authenticated`/`get_payload`/`check_role`). Add channels by calling that guard with `require_auth=`/`roles=`; do not re-implement session/`exp`/payload parsing per endpoint. Keep authenticated and guest broadcast pools separate, and treat the socket session as read-only.
 
 ### `src/lib/**/*.py`
 
@@ -112,7 +113,7 @@ This is the top architectural requirement for this workspace. Treat it as a hard
 - When `caspian.config.json` has `mcp: true`, keep app-owned MCP tools in `src/lib/mcp/mcp_server.py` and keep the default FastMCP config in `src/lib/mcp/fastmcp.json`. If those locations change, update `settings/restart-mcp.ts` and the MCP docs together.
 - Keep auth policy in `src/lib/auth/auth_config.py`. Keep auth bootstrap and middleware order changes in `main.py`.
 - Do not recreate or customize `src/lib/security/runtime_security.py` for normal application work. Runtime security helpers are package-owned in `casp.runtime_security`; app-specific policy should live in app-owned config or route/helper code instead.
-- Keep reusable WebSocket helpers under `src/lib/websocket/**` when they are shared across socket endpoints or route clients. Common shared helpers include session extraction, authenticated payload checks, origin utilities, connection managers, payload normalization, and broadcast fan-out.
+- Keep reusable WebSocket helpers under `src/lib/websocket/**` when they are shared across socket endpoints or route clients. Common shared helpers include the `authorize_websocket(...)` guard (origin + `Auth`-delegated auth), origin utilities, connection managers, payload normalization, and broadcast fan-out.
 
 ### `src/components/**/*.py`
 
