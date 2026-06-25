@@ -19,6 +19,8 @@ from fastapi import (
 )
 from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse
 from starlette.datastructures import MutableHeaders
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -58,6 +60,78 @@ load_dotenv()
 cfg = get_config()
 
 # ====
+# CORS configuration (shared .env convention, mirrors casp.rpc origin checks)
+# ====
+
+
+def _csv_env(name: str) -> list[str]:
+    return [item.strip() for item in os.getenv(name, "").split(",") if item.strip()]
+
+
+def _bool_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _configured_cors_origins() -> list[str]:
+    """Browser origins allowed to call the app, per the .env convention."""
+    origins: list[str] = []
+    for raw in (*_csv_env("CORS_ALLOWED_ORIGINS"), os.getenv("APP_BASE_URL", "")):
+        value = (raw or "").strip().rstrip("/")
+        if value and value not in origins:
+            origins.append(value)
+    return origins
+
+
+def _build_mcp_cors_middleware() -> "Middleware":
+    """Build the MCP CORS layer from .env, adding MCP-required headers.
+
+    Browser MCP clients (e.g. MCP Inspector "Direct") send an OPTIONS preflight
+    and rely on the mcp-session-id / mcp-protocol-version headers, which are not
+    in the generic CORS_ALLOWED_HEADERS list, so they are merged in here.
+    """
+    origins = _configured_cors_origins()
+    allow_credentials = _bool_env("CORS_ALLOW_CREDENTIALS")
+
+    if not origins:
+        # The CORS spec forbids "*" together with credentials, so when no
+        # explicit origin is configured fall back to open + no credentials.
+        origins = ["*"]
+        allow_credentials = False
+
+    methods = _csv_env("CORS_ALLOWED_METHODS") or [
+        "GET", "POST", "DELETE", "OPTIONS"]
+
+    headers = _csv_env("CORS_ALLOWED_HEADERS")
+    for required in ("Content-Type", "Accept", "Authorization",
+                     "mcp-session-id", "mcp-protocol-version"):
+        if required.lower() not in {h.lower() for h in headers}:
+            headers.append(required)
+
+    expose = _csv_env("CORS_EXPOSE_HEADERS")
+    for required in ("mcp-session-id", "mcp-protocol-version"):
+        if required.lower() not in {h.lower() for h in expose}:
+            expose.append(required)
+
+    try:
+        max_age = int(os.getenv("CORS_MAX_AGE", "600"))
+    except ValueError:
+        max_age = 600
+
+    return Middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=allow_credentials,
+        allow_methods=methods,
+        allow_headers=headers,
+        expose_headers=expose,
+        max_age=max_age,
+    )
+
+
+# ====
 # MCP SERVER (mounted into this app so one deploy serves web + MCP)
 # ====
 mcp_app = None
@@ -66,7 +140,7 @@ if cfg.mcp:
     # caspian.config.json, so suppress the static "module not found" check.
     from src.lib.mcp.mcp_server import mcp  # type: ignore[import-not-found]
     # Inner path "/" so the mount prefix below is the full endpoint path.
-    mcp_app = mcp.http_app(path="/")
+    mcp_app = mcp.http_app(path="/", middleware=[_build_mcp_cors_middleware()])
 
 # ====
 # AUTH CONFIGURATION (App behavior - customize here)
