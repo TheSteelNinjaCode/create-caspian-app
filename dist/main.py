@@ -37,7 +37,7 @@ from casp.layout import (
 )
 import hashlib
 from casp.streaming import SSE
-from typing import Any, Optional, get_args, get_origin, Union
+from typing import Any, AsyncGenerator, Generator, Optional, cast, get_args, get_origin, Union
 from urllib.parse import urlparse
 from src.lib.auth.auth_config import build_auth_settings
 from casp.runtime_security import (
@@ -604,7 +604,7 @@ def register_single_route(url_pattern: str, file_path: str):
                 return result
 
             if inspect.isasyncgen(result) or inspect.isgenerator(result):
-                return SSE(result)
+                return SSE(cast("AsyncGenerator | Generator", result))
 
             cache_settings = getattr(module, 'cache_settings', None)
             if cache_settings:
