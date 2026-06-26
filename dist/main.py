@@ -55,6 +55,12 @@ from casp.runtime_security import (
     get_session_secret,
     public_file_response,
 )
+from contextlib import (
+    asynccontextmanager,
+    AsyncExitStack,
+    AbstractAsyncContextManager,
+)
+from collections.abc import Callable
 
 load_dotenv()
 cfg = get_config()
@@ -154,15 +160,69 @@ def setup_auth():
 
 setup_auth()
 
+LifespanFactory = Callable[[FastAPI], AbstractAsyncContextManager[Any]]
+
+
+def get_app_lifespans() -> list[LifespanFactory]:
+    """
+    Register all application lifespan handlers here.
+
+    Add a lifespan here when a feature needs startup/shutdown behavior.
+
+    Examples:
+    - Telegram bot/domain workers
+    - MCP streamable HTTP server
+    - Queue workers
+    - Background schedulers
+    - Database/cache connection managers
+    - WebSocket background services
+
+    Rule:
+    Each item must be a callable that receives the FastAPI app and returns
+    an async context manager.
+
+    Example:
+        lifespans.append(app_lifespan)
+
+    For optional/generated features, guard the lifespan with the related
+    config flag or runtime availability check.
+    """
+    lifespans: list[LifespanFactory] = []
+
+    # MCP lifecycle
+    # FastMCP needs its lifespan running so the MCP session manager starts.
+    if mcp_app is not None:
+        lifespans.append(mcp_app.lifespan)
+
+    return lifespans
+
+
+@asynccontextmanager
+async def combined_lifespan(app: FastAPI):
+    """
+    Run all registered lifespans using one FastAPI lifespan entrypoint.
+
+    FastAPI accepts only one `lifespan`, so this function composes multiple
+    independent startup/shutdown contexts into a single lifecycle.
+
+    Startup order:
+    - Same order as `get_app_lifespans()`
+
+    Shutdown order:
+    - Reverse order, handled automatically by AsyncExitStack
+    """
+    async with AsyncExitStack() as stack:
+        for lifespan in get_app_lifespans():
+            await stack.enter_async_context(lifespan(app))
+        yield
+
 app = FastAPI(
     title=cfg.projectName,
     version=cfg.version,
     docs_url="/docs" if cfg.backendOnly else None,
     redoc_url="/redoc" if cfg.backendOnly else None,
     openapi_url="/openapi.json" if cfg.backendOnly else None,
-    # FastMCP's streamable-HTTP transport starts its session manager in its
-    # lifespan; FastAPI must run it or MCP requests fail at runtime.
-    lifespan=mcp_app.lifespan if mcp_app is not None else None,
+    lifespan=combined_lifespan,
 )
 
 
