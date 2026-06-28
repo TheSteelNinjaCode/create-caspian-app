@@ -154,6 +154,21 @@ function getExternalIP(): string | null {
   return null;
 }
 
+// All reload triggers funnel through this single debounced worker so that a
+// multi-file save (or several watchers firing for one edit) collapses into a
+// single browser reload instead of a cascade of reloads.
+const reloader = new DebouncedWorker(
+  () => {
+    if (bs.active) bs.reload();
+  },
+  500,
+  "bs-reload",
+);
+
+function requestReload(reason?: string) {
+  reloader.schedule(reason);
+}
+
 const pipeline = new DebouncedWorker(
   async () => {
     const changedFile = lastChangedFile;
@@ -172,8 +187,8 @@ const pipeline = new DebouncedWorker(
       updateRouteFilesCache();
 
       const isReady = await waitForPort(pythonPort);
-      if (isReady && bs.active) {
-        bs.reload();
+      if (isReady) {
+        requestReload("python restart");
       } else {
         console.error(
           chalk.red("Warning: Server failed to start or timed out."),
@@ -208,16 +223,16 @@ const pipeline = new DebouncedWorker(
         );
         await restartPythonServer(pythonPort, bsPort);
         const isReady = await waitForPort(pythonPort);
-        if (isReady && bs.active) bs.reload();
-      } else if (bs.active) {
-        bs.reload();
+        if (isReady) requestReload("structure change");
+      } else {
+        requestReload("src change");
       }
       previousRouteFiles = routeFiles;
-    } else if (bs.active) {
-      bs.reload();
+    } else {
+      requestReload("src change");
     }
   },
-  350,
+  1200,
   "bs-pipeline",
 );
 
@@ -245,9 +260,9 @@ const publicPipeline = new DebouncedWorker(
     console.log(
       chalk.cyan("-> Public directory changed, reloading browser..."),
     );
-    if (bs.active) bs.reload();
+    requestReload("public change");
   },
-  350,
+  1200,
   "bs-public-pipeline",
 );
 
@@ -327,8 +342,8 @@ async function shutdown(exitCode: number): Promise<void> {
   sourceWatchers.push(
     createSrcWatcher(viteFlagFile, {
       onEvent: (ev) => {
-        if (ev === "change" && bs.active) {
-          bs.reload();
+        if (ev === "change") {
+          requestReload("vite build complete");
         }
       },
       awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
@@ -344,7 +359,7 @@ async function shutdown(exitCode: number): Promise<void> {
         if (_abs.includes("__pycache__")) return;
         await restartPythonServer(pythonPort, bsPort);
         const isReady = await waitForPort(pythonPort);
-        if (isReady && bs.active) bs.reload();
+        if (isReady) requestReload("utils change");
       },
       awaitWriteFinish: DEFAULT_AWF,
       logPrefix: "watch-utils",
@@ -359,7 +374,7 @@ async function shutdown(exitCode: number): Promise<void> {
         if (_abs.includes("__pycache__")) return;
         await restartPythonServer(pythonPort, bsPort);
         const isReady = await waitForPort(pythonPort);
-        if (isReady && bs.active) bs.reload();
+        if (isReady) requestReload("main.py change");
       },
       awaitWriteFinish: DEFAULT_AWF,
       logPrefix: "watch-main",
