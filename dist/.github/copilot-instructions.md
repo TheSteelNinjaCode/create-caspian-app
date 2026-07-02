@@ -35,7 +35,7 @@ This is the top architectural requirement for this workspace. Treat it as a hard
 - For current repo behavior, trust `main.py`, `src/lib/**`, `public/js/**`, `prisma/**`, and `src/app/**` over generic Caspian docs.
 - For framework internals, trust `.venv/Lib/site-packages/casp/**` over generic or older upstream guidance.
 - When packaged docs conflict with project code or installed runtime, the project code, `caspian.config.json`, and installed runtime win. Keep the packaged docs feature-oriented and point AI back to the project files that decide actual enablement and behavior.
-- When `prisma/schema.prisma` changes, follow this order: run `npx prisma migrate dev`; if the change affects seed flow or `prisma/seed.ts`, run `npx prisma generate` and then `npx prisma db seed`; then run `npx ppy generate` so the Python ORM stays aligned with the schema.
+- When `prisma/schema.prisma` changes, follow this order: run `npx prisma migrate dev`; if the change affects seed flow or `prisma/seed.ts`, run `npx prisma generate` and then consider `npx prisma db seed`; then run `npx ppy generate` so the Python ORM stays aligned with the schema. Treat `npx prisma db seed` as a destructive data operation: it may clean tables and replace existing records, including production data if pointed at the wrong database. Before running it, tell the user exactly which command you intend to run, explain that it can delete or overwrite database data, confirm the current datasource when practical, and wait for the user's explicit approval.
 - Reuse the existing Python database layer in `src/lib/prisma/**`; do not create a second app-owned database abstraction unless the user explicitly asks for one.
 - When `caspian.config.json` has `prisma: true`, all Python-side database reads and writes must go through the generated Prisma Python ORM exposed from `src/lib/prisma/**`. Do not bypass it with ad hoc sqlite/postgres drivers, hand-written fetch helpers, JSON files as active stores, browser-side database fetches, or custom HTTP endpoints that reinvent the ORM. Use raw SQL only through Prisma as a narrow fallback when the generated ORM cannot express the query clearly.
 - Treat `src/lib/prisma/__init__.py`, `src/lib/prisma/db.py`, `src/lib/prisma/models.py`, and `settings/prisma-schema.json` as generated outputs owned by `npx ppy generate`; do not create or hand-edit them manually.
@@ -161,7 +161,7 @@ This is the top architectural requirement for this workspace. Treat it as a hard
 - Treat `prisma/schema.prisma` as the data-model source of truth.
 - Treat `prisma.config.ts` as the datasource and migration or seed configuration source of truth.
 - After changing `prisma/schema.prisma`, run `npx prisma migrate dev` first so migrations and the development database stay aligned.
-- If the schema change affects seed data or `prisma/seed.ts`, run `npx prisma generate` and then `npx prisma db seed`.
+- If the schema change affects seed data or `prisma/seed.ts`, run `npx prisma generate`, then ask for explicit user approval before running `npx prisma db seed` because the seed script may delete or replace table data.
 - Run `npx ppy generate` after every schema change so the Python ORM files and `settings/prisma-schema.json` stay aligned with Prisma.
 - Keep Node-side generation and seeding aligned with `npx prisma generate` and `prisma/seed.ts`.
 - Keep Python-side database access aligned with `src/lib/prisma/**`, and treat that directory as generated output rather than a manual editing surface.

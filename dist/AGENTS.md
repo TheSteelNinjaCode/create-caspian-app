@@ -67,6 +67,7 @@ Use `.github/copilot-instructions.md` for the repo-wide implementation rules. Th
 - Use `node_modules/caspian-utils/dist/docs/websockets.md` when the task names WebSockets, live bidirectional channels, socket origin checks, socket auth/session behavior, broadcast managers, or native browser `WebSocket` clients.
 - Use `node_modules/caspian-utils/dist/docs/file-conventions.md` when the task asks what belongs in `index.html`, `index.py`, `layout.html`, `layout.py`, `loading.html`, `not-found.html`, or `error.html`.
 - When `caspian.config.json` has `prisma: true`, database reads and writes from Python routes, layouts, RPC actions, upload flows, auth flows, and helpers must use the generated Prisma Python ORM in `src/lib/prisma/**`. Do not create a separate database fetch layer with raw drivers, hand-written SQL helpers, JSON manifests, app-specific HTTP fetches, or browser-side data fetches to replace the ORM. Use raw SQL only as a narrow Prisma ORM fallback when the generated client cannot express a query clearly.
+- Treat `npx prisma db seed` as a delicate, potentially destructive operation. In this workspace, seed scripts may clear tables before inserting fresh records. Before running that command, an AI agent must propose the exact command, warn that it can delete or overwrite database data including production data if the datasource is wrong, confirm the datasource when practical, and wait for explicit user approval.
 - Component-first page composition is the highest-priority authoring rule for this workspace (see `.github/copilot-instructions.md`). Build pages as a short assembly of `x-*` chunk components (top menu, sidebar, header, content sections, cards, forms, footer) and keep each chunk's long markup inside its own single-file `html(...)` component, so `src/app/**/index.html` stays small instead of holding a wall of HTML. Plan the chunk breakdown before writing the route, not as a later cleanup pass.
 - Components may be authored as a single Python file. Import `html` from `casp.component_decorator` and return `html("""...""", **context)` to keep markup, server interpolation, and a PulsePoint `<script>` inline, instead of pairing the `.py` with a same-name `.html` through `render_html(...)`. Inside `html(...)`, `{{ ... }}` is server-side Jinja and `{ ... }` stays for PulsePoint; do not use a Python f-string for the markup. Prefer single-file `html(...)` for small and medium components and keep `render_html(...)` plus a `.html` file for large markup or long scripts. Both forms render identically through `transform_components(...)` then `transform_scripts(...)`. See `node_modules/caspian-utils/dist/docs/components.md`.
 - For component-to-component composition, prefer real Python imports over `<!-- @import ... -->` comments inside single-file components. A component's own `x-*` tags resolve from the components imported into its Python module, which disambiguates same-name components across directories. Resolution precedence inside a component's output is inherited ancestor components, then the component's own Python imports, then a local `@import` in that same template. Slot content (children) resolves in the scope where it was authored, so the component that writes an `x-*` tag in markup must import that component.
@@ -132,3 +133,145 @@ Before merging doc or runtime changes:
 2. Update the matching packaged doc in `node_modules/caspian-utils/dist/docs/` if the running behavior changed.
 3. Update `.github/copilot-instructions.md` if the repo-wide implementation rules changed.
 4. Update this file if the decision order, task routing, workspace clarifications, or packaged-doc maintenance rules changed.
+
+<!-- maddex:start -->
+# Maddex AI Context
+
+This project uses `maddex` to generate reusable Python UI component modules.
+
+- Config file: maddex.json
+- Maddex instructions file: .github/instructions/maddex.instructions.md
+- Components directory: src/lib/maddex
+- Configured Python source path: src/lib/maddex
+- Suggested module path: src.lib.maddex
+- Tailwind CSS file: src/app/globals.css
+- Icon library: ppicons
+- Installed component count: 57
+- Installed component inventory and project metadata: `maddex.json` (under `manifest`)
+
+## Installing Components
+
+When a requested UI component does not exist yet, install it with `maddex` instead of hand-writing generated component modules.
+
+- Add one component: `npx maddex add <component-name>`
+- Add multiple components: `npx maddex add <component-a> <component-b>`
+- Add the full catalogue: `npx maddex add --all`
+- Refresh installed components: `npx maddex update`
+
+## Discovering Available Components
+
+Use the Maddex catalogue API to find component names before installing them.
+
+- Fetch all available components: `GET https://maddex.tsnc.tech/cli?component=all`
+- Fetch one component by name: `GET https://maddex.tsnc.tech/cli?component=Button`
+- The `component=all` endpoint returns a JSON array of component names.
+- The single-component endpoint may return a `files` array for multi-file components or a legacy `content` string for a single Python module.
+
+Single component response example:
+
+```json
+{
+  "name": "Button",
+  "files": [
+    {
+      "name": "Button.py",
+      "content": "class Button:\n    ...generated Python source..."
+    },
+    {
+      "name": "Button.html",
+      "content": "<button>...generated template...</button>"
+    }
+  ]
+}
+```
+
+## Importing and Using Components
+
+Use the installed Python module as the source for template `@import` comments, then copy the live docs example for the component you are rendering.
+
+- Adjust the relative `@import` path to match the current file location.
+- Maddex docs URLs use kebab-case component names such as `https://maddex.tsnc.tech/docs/button` and `https://maddex.tsnc.tech/docs/alert-dialog`.
+- For any installed component, derive the docs page as `https://maddex.tsnc.tech/docs/<component-kebab-name>`.
+
+Button example:
+
+```html
+<!-- @import { Button } from ../../../../lib/maddex/Button.py -->
+
+<div class="flex w-full flex-wrap items-center justify-center gap-3">
+  <x-button>Default</x-button>
+  <x-button variant="secondary">Secondary</x-button>
+  <x-button variant="destructive">Destructive</x-button>
+  <x-button variant="outline">Outline</x-button>
+  <x-button variant="ghost">Ghost</x-button>
+  <x-button variant="link">Link</x-button>
+</div>
+```
+
+## Installed Components
+
+- Accordion: `src/lib/maddex/Accordion.py` (docs: `https://maddex.tsnc.tech/docs/accordion`)
+- Alert: `src/lib/maddex/Alert.py` (docs: `https://maddex.tsnc.tech/docs/alert`)
+- AlertDialog: `src/lib/maddex/AlertDialog.py` (docs: `https://maddex.tsnc.tech/docs/alert-dialog`)
+- AspectRatio: `src/lib/maddex/AspectRatio.py` (docs: `https://maddex.tsnc.tech/docs/aspect-ratio`)
+- Avatar: `src/lib/maddex/Avatar.py` (docs: `https://maddex.tsnc.tech/docs/avatar`)
+- Badge: `src/lib/maddex/Badge.py` (docs: `https://maddex.tsnc.tech/docs/badge`)
+- Breadcrumb: `src/lib/maddex/Breadcrumb.py` (docs: `https://maddex.tsnc.tech/docs/breadcrumb`)
+- Button: `src/lib/maddex/Button.py` (docs: `https://maddex.tsnc.tech/docs/button`)
+- ButtonGroup: `src/lib/maddex/ButtonGroup.py` (docs: `https://maddex.tsnc.tech/docs/button-group`)
+- Calendar: `src/lib/maddex/Calendar.py` (docs: `https://maddex.tsnc.tech/docs/calendar`)
+- Card: `src/lib/maddex/Card.py` (docs: `https://maddex.tsnc.tech/docs/card`)
+- Carousel: `src/lib/maddex/Carousel.py` (docs: `https://maddex.tsnc.tech/docs/carousel`)
+- Chart: `src/lib/maddex/Chart.py` (docs: `https://maddex.tsnc.tech/docs/chart`)
+- Checkbox: `src/lib/maddex/Checkbox.py` (docs: `https://maddex.tsnc.tech/docs/checkbox`)
+- Collapsible: `src/lib/maddex/Collapsible.py` (docs: `https://maddex.tsnc.tech/docs/collapsible`)
+- Combobox: `src/lib/maddex/Combobox.py` (docs: `https://maddex.tsnc.tech/docs/combobox`)
+- Command: `src/lib/maddex/Command.py` (docs: `https://maddex.tsnc.tech/docs/command`)
+- ContextMenu: `src/lib/maddex/ContextMenu.py` (docs: `https://maddex.tsnc.tech/docs/context-menu`)
+- DataTable: `src/lib/maddex/DataTable.py` (docs: `https://maddex.tsnc.tech/docs/data-table`)
+- DatePicker: `src/lib/maddex/DatePicker.py` (docs: `https://maddex.tsnc.tech/docs/date-picker`)
+- Dialog: `src/lib/maddex/Dialog.py` (docs: `https://maddex.tsnc.tech/docs/dialog`)
+- Drawer: `src/lib/maddex/Drawer.py` (docs: `https://maddex.tsnc.tech/docs/drawer`)
+- DropdownMenu: `src/lib/maddex/DropdownMenu.py` (docs: `https://maddex.tsnc.tech/docs/dropdown-menu`)
+- Editor: `src/lib/maddex/Editor.py` (docs: `https://maddex.tsnc.tech/docs/editor`)
+- Empty: `src/lib/maddex/Empty.py` (docs: `https://maddex.tsnc.tech/docs/empty`)
+- Field: `src/lib/maddex/Field.py` (docs: `https://maddex.tsnc.tech/docs/field`)
+- HoverCard: `src/lib/maddex/HoverCard.py` (docs: `https://maddex.tsnc.tech/docs/hover-card`)
+- Input: `src/lib/maddex/Input.py` (docs: `https://maddex.tsnc.tech/docs/input`)
+- InputGroup: `src/lib/maddex/InputGroup.py` (docs: `https://maddex.tsnc.tech/docs/input-group`)
+- InputOTP: `src/lib/maddex/InputOTP.py` (docs: `https://maddex.tsnc.tech/docs/input-otp`)
+- Item: `src/lib/maddex/Item.py` (docs: `https://maddex.tsnc.tech/docs/item`)
+- Kbd: `src/lib/maddex/Kbd.py` (docs: `https://maddex.tsnc.tech/docs/kbd`)
+- Label: `src/lib/maddex/Label.py` (docs: `https://maddex.tsnc.tech/docs/label`)
+- Menubar: `src/lib/maddex/Menubar.py` (docs: `https://maddex.tsnc.tech/docs/menubar`)
+- NavigationMenu: `src/lib/maddex/NavigationMenu.py` (docs: `https://maddex.tsnc.tech/docs/navigation-menu`)
+- Popover: `src/lib/maddex/Popover.py` (docs: `https://maddex.tsnc.tech/docs/popover`)
+- Portal: `src/lib/maddex/Portal.py` (docs: `https://maddex.tsnc.tech/docs/portal`)
+- Radio: `src/lib/maddex/Radio.py` (docs: `https://maddex.tsnc.tech/docs/radio`)
+- RadioGroup: `src/lib/maddex/RadioGroup.py` (docs: `https://maddex.tsnc.tech/docs/radio-group`)
+- Resizable: `src/lib/maddex/Resizable.py` (docs: `https://maddex.tsnc.tech/docs/resizable`)
+- ScrollArea: `src/lib/maddex/ScrollArea.py` (docs: `https://maddex.tsnc.tech/docs/scroll-area`)
+- Select: `src/lib/maddex/Select.py` (docs: `https://maddex.tsnc.tech/docs/select`)
+- Separator: `src/lib/maddex/Separator.py` (docs: `https://maddex.tsnc.tech/docs/separator`)
+- Sheet: `src/lib/maddex/Sheet.py` (docs: `https://maddex.tsnc.tech/docs/sheet`)
+- Sidebar: `src/lib/maddex/Sidebar.py` (docs: `https://maddex.tsnc.tech/docs/sidebar`)
+- Skeleton: `src/lib/maddex/Skeleton.py` (docs: `https://maddex.tsnc.tech/docs/skeleton`)
+- Slider: `src/lib/maddex/Slider.py` (docs: `https://maddex.tsnc.tech/docs/slider`)
+- Slot: `src/lib/maddex/Slot.py` (docs: `https://maddex.tsnc.tech/docs/slot`)
+- Switch: `src/lib/maddex/Switch.py` (docs: `https://maddex.tsnc.tech/docs/switch`)
+- Table: `src/lib/maddex/Table.py` (docs: `https://maddex.tsnc.tech/docs/table`)
+- Tabs: `src/lib/maddex/Tabs.py` (docs: `https://maddex.tsnc.tech/docs/tabs`)
+- Textarea: `src/lib/maddex/Textarea.py` (docs: `https://maddex.tsnc.tech/docs/textarea`)
+- Toast: `src/lib/maddex/Toast.py` (docs: `https://maddex.tsnc.tech/docs/toast`)
+- Toggle: `src/lib/maddex/Toggle.py` (docs: `https://maddex.tsnc.tech/docs/toggle`)
+- ToggleGroup: `src/lib/maddex/ToggleGroup.py` (docs: `https://maddex.tsnc.tech/docs/toggle-group`)
+- Tooltip: `src/lib/maddex/Tooltip.py` (docs: `https://maddex.tsnc.tech/docs/tooltip`)
+- utils: `src/lib/maddex/utils.py` (docs: `https://maddex.tsnc.tech/docs/utils`)
+
+## Usage Notes
+
+- Generated Python files follow this pattern: `src/lib/maddex/<ComponentName>.py`
+- Prefer the configured module path `src.lib.maddex` when the host project exposes that package path for imports.
+- Some components may include sidecar template or asset files next to the main Python module.
+- Manual content outside this managed block is preserved.
+<!-- maddex:end -->
