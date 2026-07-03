@@ -1,5 +1,6 @@
 from casp.components_compiler import transform_components
 from casp.scripts_type import transform_scripts
+from casp.html_native import parse_fragment, serialize_fragment
 import asyncio
 import inspect
 import os
@@ -214,6 +215,7 @@ async def combined_lifespan(app: FastAPI):
     async with AsyncExitStack() as stack:
         for lifespan in get_app_lifespans():
             await stack.enter_async_context(lifespan(app))
+
         yield
 
 app = FastAPI(
@@ -950,7 +952,7 @@ def register_single_route(url_pattern: str, file_path: str):
             component_compiler=transform_components
         )
 
-        html_output = transform_scripts(html_output)
+        html_output = finalize_html(html_output)
         response = HTMLResponse(content=html_output)
         response.headers['X-PP-Root-Layout'] = root_layout_id
 
@@ -989,6 +991,63 @@ def register_single_route(url_pattern: str, file_path: str):
                       methods=route_methods, name=endpoint)
 
 
+def defer_component_roots(html_output: str) -> str:
+    """Wrap top-level ``[pp-component]`` roots in an inert ``<template>``.
+
+    The browser never parses/validates/fetches the contents of a ``<template>``
+    element, so raw ``{...}`` placeholders inside SVG geometry attributes, form
+    ``value``/date inputs, ``src``/``href`` URLs, or table/select structure no
+    longer trigger console errors, bogus ``404`` requests, value coercion, or
+    HTML foster-parenting before hydration. PulsePoint's ``mount()`` bootstrap
+    materializes ``template[pp-component]`` back into live DOM (reusing the
+    existing ``materializeTemplateComponentBoundaries`` path) before it scans
+    for component roots, so post-hydration behavior is identical to today.
+
+    Only the outermost (non-nested) roots are wrapped; nested component
+    boundaries ride along inside the inert content and become live when the
+    outer template is materialized, so morphing and RPC re-render still operate
+    on live ``[pp-component]`` DOM.
+    """
+    if 'pp-component' not in html_output:
+        return html_output
+
+    soup = parse_fragment(html_output)
+    body = soup.body
+    if body is None:
+        return html_output
+
+    roots = [
+        el for el in body.select('[pp-component]')
+        if el.name != 'template'
+        and not any(
+            parent.has_attr('pp-component') for parent in el.parents
+        )
+    ]
+    if not roots:
+        return html_output
+
+    for root in roots:
+        key = root.get('pp-component')
+        if key is None:
+            continue
+        template = soup.new_tag('template')
+        template['pp-component'] = key
+        root.insert_before(template)
+        template.append(root.extract())
+
+    return serialize_fragment(soup)
+
+
+def finalize_html(html_output: str) -> str:
+    """Final full-document transforms applied just before the response.
+
+    Runs ``transform_scripts`` (author ``<script>`` -> ``type="text/pp"``) then
+    ``defer_component_roots`` so scripts are tagged before they are moved into
+    the inert component ``<template>``.
+    """
+    return defer_component_roots(transform_scripts(html_output))
+
+
 register_routes()
 register_rpc_routes(app)
 
@@ -1019,7 +1078,7 @@ async def custom_404_handler(request: Request, exc: StarletteHTTPException):
                 context_data={'request': request},
                 page_component_source=not_found_path,
                 control_mode=True,
-                transform_fn=transform_scripts
+                transform_fn=finalize_html
             )
             resp = HTMLResponse(content=html_output, status_code=404)
             resp.headers['X-PP-Root-Layout'] = root_layout_id
@@ -1054,7 +1113,7 @@ async def custom_general_exception_handler(request: Request, exc: Exception):
                 context_data=context_data,
                 page_component_source=error_page_path,
                 control_mode=True,
-                transform_fn=transform_scripts
+                transform_fn=finalize_html
             )
             resp = HTMLResponse(content=html_output, status_code=500)
             resp.headers['X-PP-Root-Layout'] = root_layout_id
