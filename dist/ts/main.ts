@@ -7,9 +7,9 @@ import "/js/pp-reactive-v2.js";
 
 // Uncomment the following line if you need to use the createGlobalSingleton function in this file.
 // import { createGlobalSingleton } from "./global-functions.js";
-// import { myCustomFunction } from "./money.js";
+// import { mergeTailwindClasses } from "./tailwind-merge.js";
 
-// createGlobalSingleton("myCustomFunction", myCustomFunction);
+// createGlobalSingleton("twMerge", mergeTailwindClasses);
 
 // Imports goes here --End
 
