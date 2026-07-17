@@ -176,3 +176,25 @@ export function stopPythonServer(): void {
   pythonProcess = null;
   if (prev) killProcessTree(prev);
 }
+
+export async function waitForHttpHealth(
+  port: number,
+  timeout = 15000,
+): Promise<boolean> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt <= timeout) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/health`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(1000),
+      });
+
+      if (response.ok) return true;
+    } catch {}
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+
+  return false;
+}

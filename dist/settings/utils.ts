@@ -137,6 +137,67 @@ export class DebouncedWorker {
   }
 }
 
+/**
+ * Collects a burst of filesystem events into one batch. If more events arrive
+ * while the batch is being processed, they are held until another full quiet
+ * period has elapsed. `onSettled` only runs when no newer work is pending, so
+ * callers can safely perform one user-visible action (such as a browser
+ * reload) after the final batch instead of after every intermediate batch.
+ */
+export class SettledBatchWorker<T> {
+  private timer: NodeJS.Timeout | null = null;
+  private pending = new Set<T>();
+  private running = false;
+
+  constructor(
+    private work: (items: ReadonlySet<T>) => Promise<void> | void,
+    private onSettled: () => Promise<void> | void,
+    private quietMs = 1200,
+    private name = "batch",
+  ) {}
+
+  schedule(item: T) {
+    this.pending.add(item);
+    this.armQuietPeriod();
+  }
+
+  private armQuietPeriod() {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.drain();
+    }, this.quietMs);
+  }
+
+  private async drain() {
+    if (this.running) return;
+    if (this.pending.size === 0) return;
+
+    const batch = new Set(this.pending);
+    this.pending.clear();
+    this.running = true;
+
+    try {
+      await this.work(batch);
+    } catch (err) {
+      console.error(`[${this.name}] error:`, err);
+    } finally {
+      this.running = false;
+    }
+
+    if (this.pending.size > 0) {
+      this.armQuietPeriod();
+      return;
+    }
+
+    try {
+      await this.onSettled();
+    } catch (err) {
+      console.error(`[${this.name}] settle error:`, err);
+    }
+  }
+}
+
 export function createRestartableProcess(spec: {
   name: string;
   cmd: string;

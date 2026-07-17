@@ -4,12 +4,16 @@ import { execFile } from "child_process";
 import { generateFileListJson } from "./files-list.js";
 import { join, dirname, relative } from "path";
 import { getFileMeta, PUBLIC_DIR, SRC_DIR } from "./utils.js";
-import { DebouncedWorker, createSrcWatcher, DEFAULT_AWF } from "./utils.js";
+import {
+  SettledBatchWorker,
+  createSrcWatcher,
+  DEFAULT_AWF,
+} from "./utils.js";
 import {
   startPythonServer,
   restartPythonServer,
   stopPythonServer,
-  waitForPort,
+  waitForHttpHealth,
 } from "./python-server.js";
 import { componentMap } from "./component-map.js";
 import { Socket } from "net";
@@ -25,8 +29,8 @@ const WORKSPACE_ROOT = join(__dirname, "..");
 const PUBLIC_ROOT = join(WORKSPACE_ROOT, PUBLIC_DIR);
 const PUBLIC_IGNORE_DIRS = ["uploads"];
 let previousRouteFiles: string[] = [];
-let lastChangedFile: string | null = null;
 let shuttingDown = false;
+let serverReady = true;
 
 let pythonPort = 0;
 let bsPort = 0;
@@ -154,88 +158,6 @@ function getExternalIP(): string | null {
   return null;
 }
 
-// All reload triggers funnel through this single debounced worker so that a
-// multi-file save (or several watchers firing for one edit) collapses into a
-// single browser reload instead of a cascade of reloads.
-const reloader = new DebouncedWorker(
-  () => {
-    if (bs.active) bs.reload();
-  },
-  500,
-  "bs-reload",
-);
-
-function requestReload(reason?: string) {
-  reloader.schedule(reason);
-}
-
-const pipeline = new DebouncedWorker(
-  async () => {
-    const changedFile = lastChangedFile;
-    lastChangedFile = null;
-
-    await generateFileListJson();
-    await componentMap();
-
-    const needsPythonRestart =
-      changedFile &&
-      changedFile.endsWith(".py") &&
-      !changedFile.includes("__pycache__");
-
-    if (needsPythonRestart) {
-      await restartPythonServer(pythonPort, bsPort);
-      updateRouteFilesCache();
-
-      const isReady = await waitForPort(pythonPort);
-      if (isReady) {
-        requestReload("python restart");
-      } else {
-        console.error(
-          chalk.red("Warning: Server failed to start or timed out."),
-        );
-      }
-      return;
-    }
-
-    if (
-      changedFile &&
-      (changedFile.endsWith(".pyc") || changedFile.includes("__pycache__"))
-    )
-      return;
-
-    const filesListPath = join(__dirname, "files-list.json");
-    if (existsSync(filesListPath)) {
-      const filesList = JSON.parse(readFileSync(filesListPath, "utf-8"));
-      const routeFiles = filesList.filter(
-        (f: string) =>
-          f.startsWith("./src/") && (f.endsWith(".py") || f.endsWith(".html")),
-      );
-
-      const routesChanged =
-        previousRouteFiles.length !== routeFiles.length ||
-        !routeFiles.every((f: string) => previousRouteFiles.includes(f));
-
-      if (previousRouteFiles.length > 0 && routesChanged) {
-        console.log(
-          chalk.yellow(
-            "-> Structure changed (New/Deleted file), restarting Python server...",
-          ),
-        );
-        await restartPythonServer(pythonPort, bsPort);
-        const isReady = await waitForPort(pythonPort);
-        if (isReady) requestReload("structure change");
-      } else {
-        requestReload("src change");
-      }
-      previousRouteFiles = routeFiles;
-    } else {
-      requestReload("src change");
-    }
-  },
-  1200,
-  "bs-pipeline",
-);
-
 function updateRouteFilesCache() {
   const filesListPath = join(__dirname, "files-list.json");
   if (existsSync(filesListPath)) {
@@ -247,6 +169,78 @@ function updateRouteFilesCache() {
   }
 }
 
+function getCurrentRouteFiles(): string[] {
+  const filesListPath = join(__dirname, "files-list.json");
+  if (!existsSync(filesListPath)) return [];
+
+  const filesList = JSON.parse(readFileSync(filesListPath, "utf-8"));
+  return filesList.filter(
+    (file: string) =>
+      file.startsWith("./src/") &&
+      (file.endsWith(".py") || file.endsWith(".html")),
+  );
+}
+
+const changeCoordinator = new SettledBatchWorker<string>(
+  async (changes) => {
+    const batch = [...changes];
+    const srcChanges = batch.filter((change) => change.startsWith("src:"));
+    const needsGeneratedMetadata = srcChanges.length > 0;
+    let structureChanged = false;
+
+    console.log(
+      chalk.cyan(`-> Processing ${batch.length} settled file change(s)...`),
+    );
+
+    if (needsGeneratedMetadata) {
+      await generateFileListJson();
+      await componentMap();
+
+      const routeFiles = getCurrentRouteFiles();
+      structureChanged =
+        previousRouteFiles.length > 0 &&
+        (previousRouteFiles.length !== routeFiles.length ||
+          !routeFiles.every((file) => previousRouteFiles.includes(file)));
+      previousRouteFiles = routeFiles;
+    }
+
+    const needsPythonRestart =
+      structureChanged ||
+      batch.some(
+        (change) =>
+          change.startsWith("main:") ||
+          change.startsWith("utils:") ||
+          (change.startsWith("src:") && change.endsWith(".py")),
+      );
+
+    if (!needsPythonRestart) return;
+
+    if (structureChanged) {
+      console.log(
+        chalk.yellow("-> Route structure changed; restarting Python server..."),
+      );
+    }
+
+    serverReady = false;
+    await restartPythonServer(pythonPort, bsPort);
+    serverReady = await waitForHttpHealth(pythonPort);
+
+    if (!serverReady) {
+      console.error(
+        chalk.red("Warning: Python server health check failed or timed out."),
+      );
+    }
+  },
+  () => {
+    if (serverReady && bs.active) {
+      console.log(chalk.cyan("-> Changes settled, reloading browser once..."));
+      bs.reload();
+    }
+  },
+  1500,
+  "bs-change-coordinator",
+);
+
 function isIgnoredPublicPath(absPath: string): boolean {
   const normalizedPath = relative(PUBLIC_ROOT, absPath).replace(/\\/g, "/");
 
@@ -254,17 +248,6 @@ function isIgnoredPublicPath(absPath: string): boolean {
     (dir) => normalizedPath === dir || normalizedPath.startsWith(`${dir}/`),
   );
 }
-
-const publicPipeline = new DebouncedWorker(
-  async () => {
-    console.log(
-      chalk.cyan("-> Public directory changed, reloading browser..."),
-    );
-    requestReload("public change");
-  },
-  1200,
-  "bs-public-pipeline",
-);
 
 type ClosableWatcher = {
   close: () => Promise<void>;
@@ -302,8 +285,18 @@ async function shutdown(exitCode: number): Promise<void> {
 (async () => {
   const reservedPorts = getReservedPorts();
 
+  console.log("[browserSync] Selecting available frontend and backend ports...");
   bsPort = await getAvailablePort(5090, reservedPorts);
   pythonPort = await getAvailablePort(5200, reservedPorts);
+
+  if (bsPort !== 5090 || pythonPort !== 5200) {
+    console.warn(
+      chalk.yellow(
+        `[browserSync] Default ports are occupied; using frontend ${bsPort} and backend ${pythonPort}. ` +
+          "Another dev stack may already be running.",
+      ),
+    );
+  }
 
   updateRouteFilesCache();
 
@@ -311,8 +304,7 @@ async function shutdown(exitCode: number): Promise<void> {
     createSrcWatcher(join(SRC_DIR, "**", "*"), {
       onEvent: (_ev, _abs, rel) => {
         if (rel.includes("__pycache__") || rel.endsWith(".pyc")) return;
-        lastChangedFile = rel;
-        pipeline.schedule(rel);
+        changeCoordinator.schedule(`src:${_ev}:${rel}`);
       },
       awaitWriteFinish: DEFAULT_AWF,
       logPrefix: "watch-src",
@@ -326,7 +318,7 @@ async function shutdown(exitCode: number): Promise<void> {
       onEvent: (_ev, abs, _) => {
         const relFromPublic = relative(PUBLIC_ROOT, abs).replace(/\\/g, "/");
         if (isIgnoredPublicPath(abs)) return;
-        publicPipeline.schedule(relFromPublic);
+        changeCoordinator.schedule(`public:${_ev}:${relFromPublic}`);
       },
       awaitWriteFinish: DEFAULT_AWF,
       logPrefix: "watch-public",
@@ -343,7 +335,7 @@ async function shutdown(exitCode: number): Promise<void> {
     createSrcWatcher(viteFlagFile, {
       onEvent: (ev) => {
         if (ev === "change") {
-          requestReload("vite build complete");
+          changeCoordinator.schedule("vite:build-complete");
         }
       },
       awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
@@ -355,11 +347,9 @@ async function shutdown(exitCode: number): Promise<void> {
 
   sourceWatchers.push(
     createSrcWatcher(join(__dirname, "..", "utils", "**", "*.py"), {
-      onEvent: async (_ev, _abs, _) => {
+      onEvent: (_ev, _abs, rel) => {
         if (_abs.includes("__pycache__")) return;
-        await restartPythonServer(pythonPort, bsPort);
-        const isReady = await waitForPort(pythonPort);
-        if (isReady) requestReload("utils change");
+        changeCoordinator.schedule(`utils:${_ev}:${rel}`);
       },
       awaitWriteFinish: DEFAULT_AWF,
       logPrefix: "watch-utils",
@@ -370,11 +360,8 @@ async function shutdown(exitCode: number): Promise<void> {
 
   sourceWatchers.push(
     createSrcWatcher(join(__dirname, "..", "main.py"), {
-      onEvent: async (_ev, _abs, _) => {
-        if (_abs.includes("__pycache__")) return;
-        await restartPythonServer(pythonPort, bsPort);
-        const isReady = await waitForPort(pythonPort);
-        if (isReady) requestReload("main.py change");
+      onEvent: (_ev) => {
+        changeCoordinator.schedule(`main:${_ev}:main.py`);
       },
       awaitWriteFinish: DEFAULT_AWF,
       logPrefix: "watch-main",

@@ -1,4 +1,5 @@
-import { defineConfig, Plugin } from "vite";
+import { defineConfig } from "vitest/config";
+import type { Plugin } from "vite";
 import path from "path";
 import fg from "fast-glob";
 import { writeFileSync } from "fs";
