@@ -20,7 +20,7 @@ addopts = "-q"
 [tool.ruff]
 # Lint the app surface only; never the framework, deps, or generated output.
 include = ["main.py", "src/**/*.py", "tests/**/*.py", "settings/check.py"]
-extend-exclude = [".venv", "node_modules"]
+extend-exclude = [".venv", "node_modules", "src/lib/prisma"]
 line-length = 100
 
 [tool.ruff.lint]
