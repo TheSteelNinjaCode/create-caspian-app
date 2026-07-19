@@ -31,6 +31,13 @@ line-length = 100
 select = ["E", "F", "W"]
 ignore = ["E501"]
 
+# Report F401 but never auto-delete it: component imports are used only as
+# `<x-*>` tags in template strings that ruff can't parse, and casp resolves those
+# tags from module globals at render time (component_decorator._attach_caller_scope).
+# `--fix` stays enabled for every other rule; settings/check.py suppresses the
+# template-driven F401s so the gate fails only on genuinely dead imports.
+unfixable = ["F401"]
+
 [tool.pyrefly]
 project-includes = ["main.py", "src/**"]
 search-path = [".", "src"]
