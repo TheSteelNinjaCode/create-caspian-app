@@ -4,8 +4,32 @@ version = "1.0.0"
 requires-python = ">=3.14"
 dependencies = []
 
+[dependency-groups]
+# Dev-only tooling for the app's test + static-analysis command.
+# Installed into .venv with `uv sync --group dev`; surfaced via `npm run check`.
+dev = []
+
 [tool.uv]
 package = false
+
+[tool.pytest.ini_options]
+# App-level tests only. Framework code under .venv/casp is out of scope.
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+# Lint the app surface only; never the framework, deps, or generated output.
+include = ["main.py", "src/**/*.py", "tests/**/*.py", "settings/check.py"]
+extend-exclude = [".venv", "node_modules"]
+line-length = 100
+
+[tool.ruff.lint]
+# Correctness-focused: pyflakes (F, e.g. undefined names, unused imports) plus
+# real pycodestyle errors/warnings (E/W). Line length (E501) is left to the
+# formatter and import ordering (I) is not enforced on the generated starter
+# code, so the linter flags actual problems rather than cosmetic churn.
+select = ["E", "F", "W"]
+ignore = ["E501"]
 
 [tool.pyrefly]
 project-includes = ["main.py", "src/**"]

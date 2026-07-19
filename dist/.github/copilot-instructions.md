@@ -42,6 +42,7 @@ This is the top architectural requirement for this workspace. Treat it as a hard
 - Treat `src/lib/prisma/__init__.py`, `src/lib/prisma/db.py`, `src/lib/prisma/models.py`, and `settings/prisma-schema.json` as generated outputs owned by `npx ppy generate`; do not create or hand-edit them manually.
 - Treat `package.json` scripts as opt-in operations. Do not run `npm run dev`, `npm run build`, or other npm scripts unless the user explicitly asks, the task genuinely requires that exact script, or deployment preparation needs `npm run build`.
 - Use `npm run build` for deployment prep or an explicit build request, not as the default validation step for routine route, feature, or documentation edits.
+- This workspace has an app-level quality gate. After editing app-owned Python (`main.py`, `src/**`), run `npm run check` (which calls `uv run python settings/check.py`) before treating the change as done. It type checks with `pyrefly`, lints with `ruff`, and runs `pytest` in one pass, prints each problem as `path:line:col [tool:code] message`, and exits non-zero; fix the reported locations. Write app-owned Python to pass type checking (annotate parameters and returns, avoid untyped `Any` drift) and add or extend tests in `tests/` for the behavior you change. See `### tests/**/*.py and settings/check.py`.
 - Let the running dev stack own generated outputs such as `public/css/styles.css`, `settings/component-map.json`, `settings/files-list.json`, `__pycache__/`, and `.pyc` files. Treat those as generated artifacts rather than authored source.
 - Never treat `__pycache__/` directories or `.pyc` files as files to edit, regenerate on purpose, or keep in the final diff.
 - Treat `settings/component-map.json` and `settings/files-list.json` as generated outputs owned by `settings/component-map.ts` and `settings/files-list.ts`; inspect them when needed, but do not hand-edit them.
@@ -124,6 +125,17 @@ This is the top architectural requirement for this workspace. Treat it as a hard
 - Move shared cards, forms, shells, navigation, and other reusable rendered building blocks here once they are used across routes or features.
 - Keep route-owned markup in `src/app/**`, and keep non-UI helpers or services in `src/lib/**`.
 - Author components as a single Python file with inline `html(...)` by default for small and medium UI, or as a `.py` plus same-name `.html` via `render_html(...)` for large markup or long scripts. Keep the single-root rule in both forms. Resolve child `x-*` tags from real Python imports in single-file components rather than `<!-- @import ... -->`. Prefer one focused component per file unless a file intentionally exports tiny, tightly coupled subcomponents. See `node_modules/caspian-utils/dist/docs/components.md`.
+
+### `tests/**/*.py` and `settings/check.py`
+
+- This is the app's own testing and static-analysis layer, added on top of Caspian; the framework ships no test runner, so treat it as a workspace convention documented here and in `AGENTS.md`, not as a packaged Caspian feature.
+- Run the whole gate with the single command `npm run check` (or `uv run python settings/check.py`). It runs `pyrefly` (type check), `ruff` (lint), and `pytest` (tests) against `main.py` and `src/**`, prints each problem as `path:line:col [tool:code] message`, and exits non-zero when any check fails. For debugging one tool, use `uv run python settings/check.py --only pyrefly` (or `ruff` / `pytest`).
+- Keep tests in `tests/` app-focused: `main.py` helpers and route behavior (via `starlette.testclient.TestClient` against `main.app`), and `src/lib/**` policy such as `auth_config.py`. Do not test framework internals under `.venv/Lib/site-packages/casp/**`.
+- `tests/conftest.py` puts the project root on `sys.path` and sets safe dev env defaults (`APP_ENV`, `AUTH_SECRET`) so importing `main` never fails during tests; extend it rather than duplicating that setup per test file.
+- When adding or changing app-owned Python, add or extend the matching test and keep `npm run check` green before finishing. New tests follow `tests/test_*.py`.
+- Tooling and config live in `pyproject.toml`: dev tools in `[dependency-groups] dev` (install/refresh with `uv sync --group dev`), type checking in `[tool.pyrefly]` (includes `main.py` and `src/**`), linting in `[tool.ruff]` (correctness-focused; `E501` line length and `I` import ordering are intentionally not enforced on generated starter code), and tests in `[tool.pytest.ini_options]`.
+- `[tool.pyrefly.errors]` suppresses `bad-return` and `bad-assignment`, so those specific type-error kinds are not reported by the gate; do not assume every annotation mismatch is caught.
+- Treat `settings/check.py` as the app-owned orchestrator for the gate. Keep it as the single entry point (parses each tool's output into the shared `path:line:col` report); do not add parallel one-off test or lint scripts to `package.json` when a `--only` flag already covers the case.
 
 ### `public/js/main.js`
 
