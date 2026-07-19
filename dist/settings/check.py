@@ -17,79 +17,24 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from functools import lru_cache
 from pathlib import Path
+
+import _component_imports as ci
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-# ---------------------------------------------------------------------------
-# Caspian component-import awareness (keeps F401 honest for `<x-*>` tags)
-# ---------------------------------------------------------------------------
-# A single-file component imports its children (`from .Dialog import
-# DialogContent`) and then uses them ONLY as `<x-dialog-content>` tags inside an
-# `html(...)`/`render_html(...)` template string. Ruff parses Python, not the
-# template, so it reports every such import as unused (F401). Those imports are
-# load-bearing: Caspian resolves the tag from the module's globals at render
-# time, so removing them breaks the page. `pyproject.toml` already makes F401
-# unfixable so `--fix` can never delete them; here we drop the matching F401
-# *reports* too, so the gate only fails on genuinely dead imports. The tag name
-# is derived exactly as casp does it: `x-{camel_to_kebab(import_name)}`.
-
-# Mirror of casp.string_helpers.camel_to_kebab. Kept in lockstep so the tag we
-# look for matches the tag the compiler actually resolves.
-def _camel_to_kebab(name: str) -> str:
-    name = re.sub(r"[\._:]+", "-", str(name))
-    name = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1-\2", name)
-    return re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", name).lower()
-
-
-# Pull the bound local name out of a ruff F401 message such as
-# "`.Dialog.DialogContent` imported but unused" -> "DialogContent".
-_F401_SYMBOL = re.compile(r"`([^`]+)`")
-
-
-def _f401_bound_name(message: str) -> str | None:
-    m = _F401_SYMBOL.search(message)
-    if not m:
-        return None
-    qualified = m.group(1).strip()
-    if " as " in qualified:  # aliased import binds the alias
-        qualified = qualified.split(" as ")[-1].strip()
-    return qualified.split(".")[-1].strip() or None
-
-
-@lru_cache(maxsize=512)
-def _file_source(path: str) -> str:
-    try:
-        return Path(path).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return ""
-
-
-def _import_used_as_component_tag(path: str, symbol: str) -> bool:
-    """True when `symbol` is used as an `<x-...>` component tag in the file."""
-    source = _file_source(path)
-    if not source:
-        return False
-    tag = f"x-{_camel_to_kebab(symbol)}"
-    # Match `<x-dialog-content` followed by a tag boundary so `x-dialog-content`
-    # does not spuriously match `x-dialog-content-extra`.
-    pattern = re.compile(r"<" + re.escape(tag) + r"(?=[\s/>])", re.IGNORECASE)
-    return bool(pattern.search(source))
-
-
 def _is_component_import_false_positive(issue: Issue) -> bool:
+    # Keep the gate honest for `<x-*>` tags: a component imports its children and
+    # uses them only as tags in a template string ruff can't parse, so ruff
+    # reports the import as F401. Those are load-bearing (see _component_imports),
+    # so drop the report; genuinely dead imports still fail.
     if issue.tool != "ruff" or issue.code != "F401":
         return False
-    symbol = _f401_bound_name(issue.message)
-    if not symbol:
-        return False
-    return _import_used_as_component_tag(issue.path, symbol)
+    return ci.is_component_tag_f401(issue.message, issue.path)
 
 # Terminal colors (disabled automatically when output is not a TTY).
 _TTY = sys.stdout.isatty()

@@ -28,26 +28,35 @@ uv run python settings/check.py --only pyrefly   # or ruff / pytest
 npm run check:fix
 ```
 
-That runs `ruff check . --fix` (safely fixes most lint issues — unused
-variables, redundant code, etc.) and then re-runs the full gate so you see
-what's left. Type errors (pyrefly) and failing tests (pytest) are never
-auto-fixed — fix those at the reported `path:line:col`.
+That runs `settings/fix.py` (safely fixes lint issues — dead imports, redundant
+code, etc.) and then re-runs the full gate so you see what's left. Type errors
+(pyrefly) and failing tests (pytest) are never auto-fixed — fix those at the
+reported `path:line:col`.
 
-### One deliberate exception: unused imports (F401) are never auto-deleted
+### How unused-import (F401) removal stays safe
 
-`--fix` will **not** remove "unused" imports, because in this app that check is
-unreliable. Caspian single-file components import their children and then use
-them only as `<x-*>` tags inside `html(...)`/`render_html(...)` template strings
-(e.g. `from .Dialog import DialogContent` → `<x-dialog-content>`). Ruff can't
-parse the template, so it sees the import as unused — but casp resolves the tag
-from the module's globals at render time, so deleting it breaks the page.
+Removing "unused" imports is the one fix that is dangerous in this app. Caspian
+single-file components import their children and then use them only as `<x-*>`
+tags inside `html(...)`/`render_html(...)` template strings (e.g. `from .Dialog
+import DialogContent` → `<x-dialog-content>`). Ruff can't parse the template, so
+it sees the import as unused — but casp resolves the tag from the module's
+globals at render time, so deleting it breaks the page.
 
-`F401` is marked `unfixable` in `pyproject.toml`, so `--fix` reports these
-imports but never strips them. `settings/check.py` then suppresses the F401s
-whose symbol is actually used as an `<x-*>` tag, so **the gate fails only on
-genuinely dead imports**. When `npm run check` reports an F401, remove that
-import **by hand** — first confirm it is not used as an `<x-*>` tag in the same
-file.
+Two layers keep this safe, so `check:fix` still cleans real dead imports:
+
+- **A raw `ruff check --fix` never deletes any import.** `F401` is marked
+  `unfixable` in `pyproject.toml`, so even if someone runs ruff directly, no
+  component import is ever stripped.
+- **`npm run check:fix` removes only genuinely dead imports.** `settings/fix.py`
+  asks ruff which files have an `F401`, skips any file that contains an import
+  used as an `<x-*>` tag (leaving those whole), and removes dead imports from the
+  rest via an isolated ruff run. Component-guarded files are left for the gate to
+  report, so you decide by hand there.
+
+`settings/check.py` also suppresses the `F401` *reports* whose symbol is used as
+an `<x-*>` tag, so **the gate fails only on genuinely dead imports**. The
+`<x-*>`-tag detection is shared between the fixer and the gate in
+`settings/_component_imports.py`.
 
 ## Tools (Python dev group in `pyproject.toml`)
 
