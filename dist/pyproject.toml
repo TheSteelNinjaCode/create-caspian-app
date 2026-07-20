@@ -38,11 +38,10 @@ ignore = ["E501"]
 # template-driven F401s so the gate fails only on genuinely dead imports.
 unfixable = ["F401"]
 
-[tool.pyrefly]
-project-includes = ["main.py", "src/**"]
-search-path = [".", "src"]
-python-platform = "win32"
-
-[tool.pyrefly.errors]
-bad-assignment = false
-bad-return = false
+[tool.pyright]
+include = ["main.py", "src"]
+exclude = [".venv", "node_modules", "**/__pycache__"]
+pythonPlatform = "Windows"
+typeCheckingMode = "basic"
+reportReturnType = "none"
+reportAssignmentType = "none"

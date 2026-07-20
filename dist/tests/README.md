@@ -9,7 +9,7 @@ not the Caspian framework under `.venv/` or `node_modules/`.
 npm run check
 ```
 
-That is the single production gate. It runs **pyrefly** (types), **ruff**
+That is the single production gate. It runs **pyright** (types), **ruff**
 (lint), and **pytest** (tests) in one pass, prints every problem as
 `path:line:col  [tool:code] message`, and exits non-zero on failure — so CI,
 a pre-commit hook, or an agent is told exactly which file and location to fix.
@@ -17,7 +17,7 @@ a pre-commit hook, or an agent is told exactly which file and location to fix.
 While debugging you can narrow to one tool:
 
 ```bash
-uv run python settings/check.py --only pyrefly   # or ruff / pytest
+uv run python settings/check.py --only pyright   # or ruff / pytest
 ```
 
 ## Auto-fixing lint issues
@@ -30,7 +30,7 @@ npm run check:fix
 
 That runs `settings/fix.py` (safely fixes lint issues — dead imports, redundant
 code, etc.) and then re-runs the full gate so you see what's left. Type errors
-(pyrefly) and failing tests (pytest) are never auto-fixed — fix those at the
+(pyright) and failing tests (pytest) are never auto-fixed — fix those at the
 reported `path:line:col`.
 
 ### How unused-import (F401) removal stays safe
@@ -60,7 +60,7 @@ an `<x-*>` tag, so **the gate fails only on genuinely dead imports**. The
 
 ## Tools (Python dev group in `pyproject.toml`)
 
-- **pyrefly** — type checker. Config in `[tool.pyrefly]`; checks `main.py` and `src/**`.
+- **pyright** — type checker. Config in `[tool.pyright]`; checks `main.py` and `src/**` (excluding the generated `src/lib/prisma/**` ORM). Pylance reads the same config, so the IDE and `npm run check` agree.
 - **ruff** — linter. Config in `[tool.ruff]`; correctness-focused rules.
 - **pytest** — test runner. Tests live in `tests/`.
 

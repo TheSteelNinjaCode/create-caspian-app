@@ -7,7 +7,7 @@ an agent (or a human) is told exactly which file and location to fix.
 Usage (from the project root):
 
     python settings/check.py                # run everything (the gate)
-    python settings/check.py --only pyrefly # run one tool while debugging
+    python settings/check.py --only pyright # run one tool while debugging
 
 Exit code is 0 only when every selected check passes, so it works as a CI /
 pre-commit gate. Prefer `npm run check` for day-to-day use.
@@ -92,32 +92,36 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def run_pyrefly() -> Result:
-    cmd = [sys.executable, "-m", "pyrefly", "check", "--output-format", "json"]
+def run_pyright() -> Result:
+    # `--outputjson` emits a single JSON object the gate can parse; pyright
+    # picks up its config (scope, mode) from `[tool.pyright]` in pyproject.toml.
+    cmd = [sys.executable, "-m", "pyright", "--outputjson"]
     proc = _run(cmd)
 
     issues: list[Issue] = []
     try:
         data = json.loads(proc.stdout or "{}")
     except json.JSONDecodeError:
-        # pyrefly failed to run (e.g. config error); surface stderr as a note.
-        return Result("pyrefly", ok=False, note=proc.stderr.strip() or proc.stdout.strip())
+        # pyright failed to run (e.g. config error); surface stderr as a note.
+        return Result("pyright", ok=False, note=proc.stderr.strip() or proc.stdout.strip())
 
-    for err in data.get("errors", []):
-        if err.get("severity") not in (None, "error"):
+    for diag in data.get("generalDiagnostics", []):
+        if diag.get("severity") != "error":
+            # warnings/information don't fail the gate, only `error` does.
             continue
+        start = (diag.get("range") or {}).get("start") or {}
         issues.append(
             Issue(
-                path=err.get("path", "?"),
-                line=int(err.get("line", 0)),
-                column=int(err.get("column", 0)),
-                tool="pyrefly",
-                code=err.get("name", "type-error"),
-                message=err.get("concise_description")
-                or err.get("description", "type error"),
+                path=diag.get("file", "?"),
+                # pyright ranges are 0-based; the gate reports 1-based.
+                line=int(start.get("line", 0)) + 1,
+                column=int(start.get("character", 0)) + 1,
+                tool="pyright",
+                code=diag.get("rule") or "type-error",
+                message=diag.get("message", "type error"),
             )
         )
-    return Result("pyrefly", ok=not issues, issues=issues)
+    return Result("pyright", ok=not issues, issues=issues)
 
 
 def run_ruff() -> Result:
@@ -224,15 +228,15 @@ def main() -> int:
     parser.add_argument(
         "--only",
         action="append",
-        choices=["pyrefly", "ruff", "pytest"],
+        choices=["pyright", "ruff", "pytest"],
         help="Run only the named tool(s). Repeatable. Default: all.",
     )
     args = parser.parse_args()
 
-    selected = args.only or ["pyrefly", "ruff", "pytest"]
+    selected = args.only or ["pyright", "ruff", "pytest"]
     results: list[Result] = []
-    if "pyrefly" in selected:
-        results.append(run_pyrefly())
+    if "pyright" in selected:
+        results.append(run_pyright())
     if "ruff" in selected:
         results.append(run_ruff())
     if "pytest" in selected:
