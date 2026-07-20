@@ -1,8 +1,18 @@
 import { Plugin } from "vite";
 import path from "path";
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from "fs";
-import ts from "typescript";
 
+/**
+ * Generates `.casp/global-functions.d.ts` so editors can type the globals
+ * registered via `createGlobalSingleton("name", value)` in `ts/main.ts`.
+ *
+ * This intentionally does NOT use the TypeScript Compiler API. The project runs
+ * the native (Go-based) `typescript` package (v7+), whose npm entry only exposes
+ * `version`/`versionMajorMinor` — the classic API (`ts.createSourceFile`,
+ * `createProgram`, the type checker, `ScriptTarget`, …) is gone. Instead we
+ * parse the small, first-party `ts/main.ts` directly and emit each global as a
+ * `typeof import("...")` type, which is fully type-accurate and needs no checker.
+ */
 export function generateGlobalTypes(): Plugin {
   const dtsPath = path.resolve(process.cwd(), ".casp", "global-functions.d.ts");
 
@@ -18,14 +28,14 @@ export function generateGlobalTypes(): Plugin {
       }
 
       const content = readFileSync(mainPath, "utf-8");
-      const globals = parseGlobalSingletons(content, mainPath);
+      const globals = parseGlobalSingletons(content);
 
       if (globals.length === 0) {
         console.warn("⚠️  No createGlobalSingleton calls found");
         return;
       }
 
-      generateDtsWithTypeChecker(globals, dtsPath, mainPath);
+      generateDts(globals, dtsPath, mainPath);
     },
   };
 }
@@ -37,218 +47,155 @@ interface GlobalDeclaration {
   isNamespace: boolean;
 }
 
-function parseGlobalSingletons(
-  content: string,
-  filePath: string
-): GlobalDeclaration[] {
-  const sf = ts.createSourceFile(
-    filePath,
-    content,
-    ts.ScriptTarget.Latest,
-    true
-  );
+interface ImportInfo {
+  path: string;
+  originalName: string;
+  isNamespace: boolean;
+}
 
-  const globals: GlobalDeclaration[] = [];
-  const importMap = new Map<
-    string,
-    { path: string; originalName: string; isNamespace: boolean }
-  >();
+/** Strip line and block comments so they can't confuse the statement scans. */
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+}
 
-  sf.statements.forEach((stmt) => {
-    if (ts.isImportDeclaration(stmt) && stmt.importClause) {
-      const moduleSpecifier = (stmt.moduleSpecifier as ts.StringLiteral).text;
+/**
+ * Build a map of local binding name -> import info for a module's imports.
+ * Handles `import { a, b as c } from "x"`, `import * as ns from "x"`, and
+ * `import def from "x"`.
+ */
+function parseImports(source: string): Map<string, ImportInfo> {
+  const importMap = new Map<string, ImportInfo>();
+  const importRe = /import\s+([\s\S]*?)\s+from\s+["']([^"']+)["']/g;
 
-      if (stmt.importClause.namedBindings) {
-        if (ts.isNamedImports(stmt.importClause.namedBindings)) {
-          stmt.importClause.namedBindings.elements.forEach((element) => {
-            const localName = element.name.text;
-            const importedName = element.propertyName
-              ? element.propertyName.text
-              : localName;
+  let match: RegExpExecArray | null;
+  while ((match = importRe.exec(source)) !== null) {
+    const clause = match[1].trim();
+    const modulePath = match[2];
 
-            importMap.set(localName, {
-              path: moduleSpecifier,
-              originalName: importedName,
-              isNamespace: false,
-            });
-          });
-        } else if (ts.isNamespaceImport(stmt.importClause.namedBindings)) {
-          const localName = stmt.importClause.namedBindings.name.text;
-          importMap.set(localName, {
-            path: moduleSpecifier,
-            originalName: localName,
-            isNamespace: true,
-          });
-        }
-      } else if (stmt.importClause.name) {
-        const localName = stmt.importClause.name.text;
-        importMap.set(localName, {
-          path: moduleSpecifier,
-          originalName: "default",
-          isNamespace: false,
-        });
-      }
+    // Namespace import: * as ns
+    const nsMatch = clause.match(/^\*\s+as\s+([A-Za-z_$][\w$]*)$/);
+    if (nsMatch) {
+      importMap.set(nsMatch[1], {
+        path: modulePath,
+        originalName: nsMatch[1],
+        isNamespace: true,
+      });
+      continue;
     }
-  });
 
-  function visit(node: ts.Node) {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === "createGlobalSingleton"
-    ) {
-      if (node.arguments.length >= 2) {
-        const nameArg = node.arguments[0];
-        const valueArg = node.arguments[1];
+    // Split into a possible default binding and a named-bindings block.
+    const namedMatch = clause.match(/\{([\s\S]*)\}/);
+    const defaultPart = clause
+      .replace(/\{[\s\S]*\}/, "")
+      .replace(/,/g, "")
+      .trim();
 
-        if (ts.isStringLiteral(nameArg) && ts.isIdentifier(valueArg)) {
-          const name = nameArg.text;
-          const variable = valueArg.text;
-          const importInfo = importMap.get(variable);
+    if (defaultPart) {
+      importMap.set(defaultPart, {
+        path: modulePath,
+        originalName: "default",
+        isNamespace: false,
+      });
+    }
 
-          if (importInfo) {
-            globals.push({
-              name,
-              importPath: importInfo.path,
-              exportName: importInfo.originalName,
-              isNamespace: importInfo.isNamespace,
-            });
-          }
+    if (namedMatch) {
+      for (const rawSpec of namedMatch[1].split(",")) {
+        const spec = rawSpec.trim();
+        if (!spec) continue;
+        const asMatch = spec.match(
+          /^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/,
+        );
+        if (asMatch) {
+          importMap.set(asMatch[2], {
+            path: modulePath,
+            originalName: asMatch[1],
+            isNamespace: false,
+          });
+        } else if (/^[A-Za-z_$][\w$]*$/.test(spec)) {
+          importMap.set(spec, {
+            path: modulePath,
+            originalName: spec,
+            isNamespace: false,
+          });
         }
       }
     }
-    ts.forEachChild(node, visit);
   }
 
-  visit(sf);
+  return importMap;
+}
+
+function parseGlobalSingletons(rawSource: string): GlobalDeclaration[] {
+  const source = stripComments(rawSource);
+  const importMap = parseImports(source);
+
+  const globals: GlobalDeclaration[] = [];
+  const callRe =
+    /createGlobalSingleton\s*\(\s*["']([^"']+)["']\s*,\s*([A-Za-z_$][\w$]*)\s*[),]/g;
+
+  let match: RegExpExecArray | null;
+  while ((match = callRe.exec(source)) !== null) {
+    const name = match[1];
+    const variable = match[2];
+    const importInfo = importMap.get(variable);
+    if (importInfo) {
+      globals.push({
+        name,
+        importPath: importInfo.path,
+        exportName: importInfo.originalName,
+        isNamespace: importInfo.isNamespace,
+      });
+    }
+  }
+
   return globals;
 }
 
-function generateDtsWithTypeChecker(
+/**
+ * Rewrite an import path so it resolves from the generated `.d.ts` location.
+ * `ts/main.ts` imports are relative to `ts/`, but the declaration file lives in
+ * `.casp/`, so a bare `./x.js` must become `../ts/x.js`. Bare module specifiers
+ * (npm packages) are returned unchanged.
+ */
+function toDtsRelativeImport(
+  importPath: string,
+  mainPath: string,
+  dtsPath: string,
+): string {
+  const isBareModule =
+    !importPath.startsWith(".") && !importPath.startsWith("/");
+  if (isBareModule) return importPath;
+
+  const abs = path.resolve(path.dirname(mainPath), importPath);
+  let rel = path.relative(path.dirname(dtsPath), abs).split(path.sep).join("/");
+  if (!rel.startsWith(".")) rel = `./${rel}`;
+  return rel;
+}
+
+function signatureFor(
+  global: GlobalDeclaration,
+  mainPath: string,
+  dtsPath: string,
+): string {
+  const spec = toDtsRelativeImport(global.importPath, mainPath, dtsPath);
+  if (global.isNamespace) return `typeof import("${spec}")`;
+  if (global.exportName === "default")
+    return `typeof import("${spec}").default`;
+  return `typeof import("${spec}").${global.exportName}`;
+}
+
+function generateDts(
   globals: GlobalDeclaration[],
   dtsPath: string,
-  mainPath: string
+  mainPath: string,
 ) {
-  const configPath = ts.findConfigFile(
-    process.cwd(),
-    ts.sys.fileExists,
-    "tsconfig.json"
-  );
-  const { config } = configPath
-    ? ts.readConfigFile(configPath, ts.sys.readFile)
-    : { config: {} };
-  const parsedConfig = ts.parseJsonConfigFileContent(
-    config,
-    ts.sys,
-    process.cwd()
-  );
-
-  const program = ts.createProgram(
-    parsedConfig.fileNames,
-    parsedConfig.options
-  );
-  const checker = program.getTypeChecker();
-  const sourceFile = program.getSourceFile(mainPath);
-
-  if (!sourceFile) {
-    generateFallbackDts(globals, dtsPath);
-    return;
-  }
-
-  const signatures = new Map<string, string>();
-  const importMap = new Map<string, ts.ImportDeclaration>();
-
-  sourceFile.statements.forEach((stmt) => {
-    if (ts.isImportDeclaration(stmt)) {
-      if (stmt.importClause?.namedBindings) {
-        if (ts.isNamedImports(stmt.importClause.namedBindings)) {
-          stmt.importClause.namedBindings.elements.forEach((element) => {
-            importMap.set(element.name.text, stmt);
-          });
-        } else if (ts.isNamespaceImport(stmt.importClause.namedBindings)) {
-          importMap.set(stmt.importClause.namedBindings.name.text, stmt);
-        }
-      } else if (stmt.importClause?.name) {
-        importMap.set(stmt.importClause.name.text, stmt);
-      }
-    }
-  });
-
-  globals.forEach(({ name, exportName, importPath, isNamespace }) => {
-    // RESOLVE SIGNATURE
-    const isExternalLibrary =
-      !importPath.startsWith(".") && !importPath.startsWith("/");
-
-    if (isExternalLibrary) {
-      if (isNamespace) {
-        signatures.set(name, `typeof import("${importPath}")`);
-      } else {
-        signatures.set(name, `typeof import("${importPath}").${exportName}`);
-      }
-      return;
-    }
-
-    try {
-      const importDecl =
-        importMap.get(exportName === "default" ? name : exportName) ||
-        importMap.get(isNamespace ? name : exportName);
-      let symbol: ts.Symbol | undefined;
-
-      if (importDecl && importDecl.importClause) {
-        if (importDecl.importClause.namedBindings) {
-          if (ts.isNamedImports(importDecl.importClause.namedBindings)) {
-            const importSpec =
-              importDecl.importClause.namedBindings.elements.find(
-                (el) =>
-                  (el.propertyName?.text || el.name.text) === exportName ||
-                  el.name.text === exportName
-              );
-            if (importSpec)
-              symbol = checker.getSymbolAtLocation(importSpec.name);
-          } else if (
-            ts.isNamespaceImport(importDecl.importClause.namedBindings)
-          ) {
-            symbol = checker.getSymbolAtLocation(
-              importDecl.importClause.namedBindings.name
-            );
-          }
-        } else if (importDecl.importClause.name) {
-          symbol = checker.getSymbolAtLocation(importDecl.importClause.name);
-        }
-      }
-
-      if (symbol) {
-        const aliasedSymbol = checker.getAliasedSymbol(symbol);
-        const targetSymbol = aliasedSymbol || symbol;
-        const type = checker.getTypeOfSymbolAtLocation(
-          targetSymbol,
-          targetSymbol.valueDeclaration!
-        );
-        const signature = checker.typeToString(
-          type,
-          undefined,
-          ts.TypeFormatFlags.NoTruncation |
-            ts.TypeFormatFlags.UseFullyQualifiedType
-        );
-
-        if (signature !== "any") {
-          signatures.set(name, signature);
-          return;
-        }
-      }
-    } catch (error) {
-      console.warn(`Failed to resolve type for ${name}`);
-    }
-
-    // Fallback
-    signatures.set(name, "any");
-  });
-
   const declarations = globals
-    .map(({ name, importPath }) => {
-      const sig = signatures.get(name) || "any";
-      // ⚡ FIX: Inject the source path as a comment for the Extension to read
-      return `  // @source: ${importPath}\n  const ${name}: ${sig};`;
+    .map((global) => {
+      const sig = signatureFor(global, mainPath, dtsPath);
+      // Inject the original source path as a comment for the editor extension.
+      return `  // @source: ${global.importPath}\n  const ${global.name}: ${sig};`;
     })
     .join("\n");
 
@@ -275,29 +222,4 @@ export {};
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(dtsPath, content, "utf-8");
   console.log(`✅ Generated ${path.relative(process.cwd(), dtsPath)}`);
-}
-
-function generateFallbackDts(globals: GlobalDeclaration[], dtsPath: string) {
-  const declarations = globals
-    .map(
-      ({ name, importPath }) =>
-        `  // @source: ${importPath}\n  const ${name}: any;`
-    )
-    .join("\n");
-
-  const windowDeclarations = globals
-    .map(({ name }) => `    ${name}: typeof globalThis.${name};`)
-    .join("\n");
-
-  const content = `// Auto-generated by Vite plugin
-declare global {
-${declarations}
-
-  interface Window {
-${windowDeclarations}
-  }
-}
-export {};
-`;
-  writeFileSync(dtsPath, content, "utf-8");
 }
