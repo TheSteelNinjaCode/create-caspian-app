@@ -60,7 +60,7 @@ an `<x-*>` tag, so **the gate fails only on genuinely dead imports**. The
 
 ## Tools (Python dev group in `pyproject.toml`)
 
-- **pyright** — type checker. Config in `[tool.pyright]`; checks `main.py` and `src/**` (excluding the generated `src/lib/prisma/**` ORM). Pylance reads the same config, so the IDE and `npm run check` agree.
+- **pyright** — type checker. Config in `[tool.pyright]`: `include = ["main.py", "src"]` with `exclude = [".venv", "node_modules", "**/__pycache__"]`, so it checks `main.py` and all of `src` — including the generated `src/lib/prisma/**` ORM. Pylance reads the same config, so the IDE and `npm run check` agree.
 - **ruff** — linter. Config in `[tool.ruff]`; correctness-focused rules.
 - **pytest** — test runner. Tests live in `tests/`.
 

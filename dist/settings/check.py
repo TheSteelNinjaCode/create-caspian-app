@@ -16,9 +16,13 @@ pre-commit gate. Prefer `npm run check` for day-to-day use.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
+import os
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -39,6 +43,13 @@ def _is_component_import_false_positive(issue: Issue) -> bool:
 # Terminal colors (disabled automatically when output is not a TTY).
 _TTY = sys.stdout.isatty()
 
+# On Windows a redirected stdout defaults to cp1252, which can't encode some
+# characters; ask for UTF-8 with a safe fallback so output never crashes.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+except (AttributeError, ValueError):
+    pass
+
 
 def _c(code: str, text: str) -> str:
     return f"\033[{code}m{text}\033[0m" if _TTY else text
@@ -58,6 +69,80 @@ def yellow(t: str) -> str:
 
 def bold(t: str) -> str:
     return _c("1", t)
+
+
+def cyan(t: str) -> str:
+    return _c("36", t)
+
+
+class _Heartbeat:
+    """Live "still working" indicator for a captured (non-streaming) tool.
+
+    Tools like pyright/ruff emit one JSON blob only when they finish, so without
+    this the terminal looks frozen while they run. On a TTY a background thread
+    ticks a spinner + elapsed seconds on one line; off a TTY (CI/pipe) it prints
+    a single start line instead of spamming carriage returns.
+    """
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> "_Heartbeat":
+        if _TTY:
+            self._thread = threading.Thread(target=self._spin, daemon=True)
+            self._thread.start()
+        else:
+            print(f"  {cyan('>')} {self.label} ... (running)", flush=True)
+        return self
+
+    def _spin(self) -> None:
+        start = time.perf_counter()
+        for frame in itertools.cycle("|/-\\"):
+            if self._stop.wait(0.4):
+                return
+            elapsed = time.perf_counter() - start
+            sys.stdout.write(f"\r  {cyan(frame)} {self.label} ... {elapsed:0.0f}s ")
+            sys.stdout.flush()
+
+    def __exit__(self, *exc: object) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join()
+        if _TTY:
+            # Wipe the spinner line so the result line prints cleanly over it.
+            sys.stdout.write("\r" + " " * 48 + "\r")
+            sys.stdout.flush()
+
+
+def _run_streamed(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run a tool and echo its output live while also capturing it.
+
+    Used for pytest so each test's progress line appears as it happens instead
+    of after a multi-minute silence. The captured text is still returned so the
+    caller can parse `FAILED` lines from it.
+    """
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    proc = subprocess.Popen(
+        cmd,
+        cwd=PROJECT_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+        env=env,
+    )
+    captured: list[str] = []
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        captured.append(line)
+        sys.stdout.write("    " + line)
+        sys.stdout.flush()
+    proc.wait()
+    return subprocess.CompletedProcess(cmd, proc.returncode, "".join(captured), "")
 
 
 @dataclass
@@ -153,8 +238,20 @@ def run_ruff() -> Result:
 
 
 def run_pytest() -> Result:
-    cmd = [sys.executable, "-m", "pytest"]
-    proc = _run(cmd)
+    # `-o addopts=` drops the ini `-q` so `-v` can print one live line per test
+    # (the "which test is running" progress); `-rfE` keeps the `FAILED nodeid -
+    # reason` summary lines this function parses below.
+    cmd = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "-o",
+        "addopts=",
+        "-v",
+        "--no-header",
+        "-rfE",
+    ]
+    proc = _run_streamed(cmd)
     ok = proc.returncode == 0
 
     issues: list[Issue] = []
@@ -223,6 +320,25 @@ def print_report(results: list[Result]) -> bool:
     return ok
 
 
+def _execute(label: str, runner, *, streamed: bool) -> Result:
+    """Run one tool with live progress, then print a one-line result."""
+    start = time.perf_counter()
+    if streamed:
+        # The tool echoes its own progress live (e.g. pytest's per-test lines).
+        print(f"  {cyan('>')} {label} ... (live output below)", flush=True)
+        result = runner()
+    else:
+        # Captured tool — show a ticking heartbeat so it never looks frozen.
+        with _Heartbeat(label):
+            result = runner()
+    elapsed = time.perf_counter() - start
+    mark = green("OK  ") if result.ok else red("FAIL")
+    count = len(result.issues)
+    detail = "" if result.ok else f"  ({count} issue(s))" if count else f"  ({result.note or 'failed'})"
+    print(f"  {mark} {label}  {elapsed:0.1f}s{detail}")
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run app type check, lint, and tests.")
     parser.add_argument(
@@ -234,13 +350,18 @@ def main() -> int:
     args = parser.parse_args()
 
     selected = args.only or ["pyright", "ruff", "pytest"]
+
+    print()
+    print(bold("Caspian app checks") + "  (live progress)")
+    print("=" * 60)
+
     results: list[Result] = []
     if "pyright" in selected:
-        results.append(run_pyright())
+        results.append(_execute("pyright", run_pyright, streamed=False))
     if "ruff" in selected:
-        results.append(run_ruff())
+        results.append(_execute("ruff", run_ruff, streamed=False))
     if "pytest" in selected:
-        results.append(run_pytest())
+        results.append(_execute("pytest", run_pytest, streamed=True))
 
     return 0 if print_report(results) else 1
 
