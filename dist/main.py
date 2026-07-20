@@ -1,6 +1,11 @@
 from casp.components_compiler import transform_components
 from casp.scripts_type import transform_scripts
-from casp.html_native import parse_fragment, serialize_fragment
+from casp.html_native import (
+    mask_escaped_brace_entities,
+    parse_fragment,
+    restore_escaped_brace_entities,
+    serialize_fragment,
+)
 import asyncio
 import inspect
 import os
@@ -49,6 +54,7 @@ import hashlib
 from casp.streaming import SSE
 from typing import Any, AsyncGenerator, Generator, Optional, cast, get_args, get_origin, Union
 from urllib.parse import urlparse
+from bs4.element import NavigableString, Tag
 from src.lib.auth.auth_config import build_auth_settings
 from casp.runtime_security import (
     build_security_headers,
@@ -1011,7 +1017,8 @@ def defer_component_roots(html_output: str) -> str:
     if 'pp-component' not in html_output:
         return html_output
 
-    soup = parse_fragment(html_output)
+    masked_html, placeholders = mask_escaped_brace_entities(html_output)
+    soup = parse_fragment(masked_html)
     body = soup.body
     if body is None:
         return html_output
@@ -1035,7 +1042,33 @@ def defer_component_roots(html_output: str) -> str:
         root.insert_before(template)
         template.append(root.extract())
 
-    return serialize_fragment(soup)
+    for template in body.select('template[pp-component]'):
+        for node in list(template.descendants):
+            if isinstance(node, NavigableString):
+                content = str(node)
+                for placeholder, entity in placeholders.items():
+                    if entity.lower() in {'&lbrace;', '&#123;', '&#x7b;'}:
+                        content = content.replace(
+                            placeholder, '__PP_ESCAPED_LEFT_BRACE__')
+                    else:
+                        content = content.replace(
+                            placeholder, '__PP_ESCAPED_RIGHT_BRACE__')
+                if content != str(node):
+                    node.replace_with(content)
+            elif isinstance(node, Tag):
+                for name, value in node.attrs.items():
+                    if not isinstance(value, str):
+                        continue
+                    for placeholder, entity in placeholders.items():
+                        if entity.lower() in {'&lbrace;', '&#123;', '&#x7b;'}:
+                            value = value.replace(
+                                placeholder, '__PP_ESCAPED_LEFT_BRACE__')
+                        else:
+                            value = value.replace(
+                                placeholder, '__PP_ESCAPED_RIGHT_BRACE__')
+                    node.attrs[name] = value
+
+    return restore_escaped_brace_entities(serialize_fragment(soup), placeholders)
 
 
 def finalize_html(html_output: str) -> str:
