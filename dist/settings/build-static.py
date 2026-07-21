@@ -1,9 +1,11 @@
 """Static site exporter for this Caspian app (SSG, like Next.js `output: export`).
 
-Boots the real ASGI app in-process and requests every route through Starlette's
-TestClient, so the exported HTML is byte-identical to what the dev server serves
-(layouts, components, PulsePoint deferral, security headers -- the whole
-pipeline). Output goes to ``static/`` as ``<route>/index.html`` plus a copy of
+Boots the real ASGI app in-process and requests every route through httpx2's
+``ASGITransport`` (the app's own HTTP client, same as the test suite), so the
+exported HTML is byte-identical to what the dev server serves (layouts,
+components, PulsePoint deferral, security headers -- the whole pipeline). The
+app's real lifespan is run around the export so startup/shutdown state matches a
+live server. Output goes to ``static/`` as ``<route>/index.html`` plus a copy of
 the public assets.
 
 Scope policy: "warn & skip". Routes that cannot be fully static are NOT written;
@@ -24,6 +26,7 @@ Caveats that hold for ANY static build of this app:
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import os
 import re
@@ -44,7 +47,7 @@ sys.path.insert(0, str(ROOT))
 # so the build does not require production secrets to be present.
 os.environ.setdefault("APP_ENV", "development")
 
-from starlette.testclient import TestClient  # noqa: E402
+import httpx2  # noqa: E402  (the app's HTTP client; drives the ASGI app in-process)
 
 import main  # noqa: E402  (imports boot the app and register all routes)
 from casp.caspian_config import get_files_index  # noqa: E402
@@ -68,7 +71,7 @@ def _route_py_path(route) -> str:
     return f"{base}/index.py".replace("//", "/")
 
 
-def _resolve_static_paths(route) -> list | None:
+async def _resolve_static_paths(route) -> list | None:
     """Return concrete param sets for a dynamic route, or None if not declared.
 
     A dynamic route pre-renders itself by exporting ``static_paths`` in its
@@ -85,11 +88,9 @@ def _resolve_static_paths(route) -> list | None:
         return None
     result: Any = provider() if callable(provider) else provider
     if inspect.isawaitable(result):
-        # Run an async provider in its own loop; keep the build itself sync
-        # so TestClient's portal is never nested inside a running loop.
-        import asyncio
-
-        result = asyncio.run(result)
+        # The whole export already runs inside a single event loop, so an async
+        # provider is awaited directly -- no nested loop.
+        result = await result
     return list(result)
 
 
@@ -199,8 +200,8 @@ def build() -> int:
 
     print(f"\n{GREEN}Caspian static export{RESET} -> {OUT_DIR}\n")
 
-    def export_one(client, url: str) -> None:
-        resp = client.get(url, follow_redirects=False)
+    async def export_one(client, url: str) -> None:
+        resp = await client.get(url, follow_redirects=False)
 
         if resp.status_code in (301, 302, 303, 307, 308):
             target = resp.headers.get("location", "?")
@@ -227,24 +228,34 @@ def build() -> int:
         if "pp.rpc" in html or "X-PP-RPC" in html or "pp-rpc" in html:
             rpc_warnings.append(url)
 
-    with TestClient(main.app) as client:
-        for route in idx.routes:
-            url = route.url_path
+    async def render_all() -> None:
+        # Drive the ASGI app in-process with httpx2 (same as the test suite).
+        # ASGITransport does not run lifespan on its own, so enter the app's real
+        # lifespan context to mirror a live server's startup/shutdown state.
+        transport = httpx2.ASGITransport(app=main.app)
+        async with main.app.router.lifespan_context(main.app):
+            async with httpx2.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
+                for route in idx.routes:
+                    url = route.url_path
 
-            # Dynamic segments: pre-render only what the route declares via
-            # static_paths() (the getStaticPaths equivalent). Otherwise skip.
-            if "{" in route.fastapi_rule:
-                param_sets = _resolve_static_paths(route)
-                if not param_sets:
-                    skipped.append(
-                        (url, "dynamic route -- add static_paths() to its index.py to pre-render (like getStaticPaths)")
-                    )
-                    continue
-                for params in param_sets:
-                    export_one(client, _fill_rule(route.fastapi_rule, params))
-                continue
+                    # Dynamic segments: pre-render only what the route declares via
+                    # static_paths() (the getStaticPaths equivalent). Otherwise skip.
+                    if "{" in route.fastapi_rule:
+                        param_sets = await _resolve_static_paths(route)
+                        if not param_sets:
+                            skipped.append(
+                                (url, "dynamic route -- add static_paths() to its index.py to pre-render (like getStaticPaths)")
+                            )
+                            continue
+                        for params in param_sets:
+                            await export_one(client, _fill_rule(route.fastapi_rule, params))
+                        continue
 
-            export_one(client, url)
+                    await export_one(client, url)
+
+    asyncio.run(render_all())
 
     _copy_assets()
 
