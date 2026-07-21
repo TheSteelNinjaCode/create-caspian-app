@@ -39,7 +39,7 @@ ignore = ["E501"]
 unfixable = ["F401"]
 
 [tool.pyright]
-include = ["main.py", "src"]
+include = ["main.py", "src", "settings/*.py"]
 exclude = [".venv", "node_modules", "**/__pycache__"]
 pythonPlatform = "Windows"
 typeCheckingMode = "basic"
