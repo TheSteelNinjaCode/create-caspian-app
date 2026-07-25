@@ -50,7 +50,7 @@ This is the top architectural requirement for this workspace. Treat it as a hard
 - Treat `settings/component-map.json` and `settings/files-list.json` as generated outputs owned by `settings/component-map.ts` and `settings/files-list.ts`; inspect them when needed, but do not hand-edit them.
 - When `caspian.config.json` has `mcp: true`, treat `src/lib/mcp/mcp_server.py` as the app-owned FastMCP server and `src/lib/mcp/fastmcp.json` as the default MCP config. Use `npm run mcp` or `fastmcp run src/lib/mcp/fastmcp.json`; do not assume root `fastmcp.json` auto-discovery.
 - Keep auth policy in `src/lib/auth/auth_config.py` and keep auth bootstrap, middleware wiring, and provider registration in `main.py`.
-- Treat `casp.runtime_security` in `.venv/Lib/site-packages/casp/runtime_security.py` as package-owned runtime support for safe public-file serving, production session-secret enforcement, production-safe error messaging, and baseline non-CSP response headers. Users should not customize this file during normal app work.
+- Treat `casp.runtime_security` in `.venv/Lib/site-packages/casp/runtime_security.py` as package-owned runtime support for safe public-file serving (including attachment mode for user uploads), production session-secret enforcement, production-safe error messaging, fail-closed `APP_ENV` resolution via `is_production_environment()`, and baseline response headers including the Content-Security-Policy. Users should not customize this file during normal app work.
 - In app-owned starter config like this workspace, routes start public because `src/lib/auth/auth_config.py` sets `is_all_routes_private=False` by default.
 - Decide route privacy in `src/lib/auth/auth_config.py` at app setup time: use `is_all_routes_private=True` when only a few routes should stay public, otherwise keep `is_all_routes_private=False` and list the protected routes in `private_routes`.
 - In all-private mode, keep public exceptions in `public_routes`; the runtime defaults keep `/` public and keep `auth_routes=["/signin", "/signup"]` public.
@@ -157,7 +157,8 @@ This is the top architectural requirement for this workspace. Treat it as a hard
 
 ### `public/js/pp-reactive-v2.js`
 
-- Treat `public/js/pp-reactive-v2.js` as the browser-side PulsePoint runtime source of truth for component execution, refs, directives, SPA navigation, and `pp.rpc(...)` behavior.
+- Treat `public/js/pp-reactive-v2.js` as the browser-side PulsePoint runtime source of truth for component execution, hooks, refs, directives, SPA navigation, and `pp.rpc(...)` behavior.
+- Only the built, minified runtime ships to the application. Do not document, reference, or route AI to a TypeScript authoring tree as if the application consumed it.
 - Preserve the current public runtime contract unless the task explicitly changes Caspian frontend behavior.
 - At runtime, component logic is discovered from `script[type="text/pp"]` inside `pp-component` roots. In authored route, layout, and component templates, write plain `<script>` and let `main.py` plus `casp.scripts_type.transform_scripts(...)` add the type.
 - The current SPA scroll contract is: save scroll positions per history entry, reset window scroll on push navigation, and use `pp-reset-scroll="true"` to opt specific containers into reset behavior. Use `body[pp-reset-scroll="true"]` only when a target route should reset every scrollable surface.
@@ -198,7 +199,7 @@ This is the top architectural requirement for this workspace. Treat it as a hard
 - Treat these files as framework internals.
 - Only change them when the task is explicitly about Caspian core behavior, installed-runtime debugging, or documentation that must match the installed implementation.
 - If behavior changes here, update the matching docs under `node_modules/caspian-utils/dist/docs/`.
-- `casp/runtime_security.py` owns framework-managed safe public-file serving, baseline non-CSP response headers, production-safe error messages, and production session-secret enforcement used by `main.py`.
+- `casp/runtime_security.py` owns framework-managed safe public-file serving, baseline response headers including the CSP (`build_content_security_policy()`, overridable via `CONTENT_SECURITY_POLICY`), production-safe error messages, fail-closed `APP_ENV` resolution, and production session-secret enforcement used by `main.py`.
 
 ### `.github/instructions/**/*.instructions.md`
 

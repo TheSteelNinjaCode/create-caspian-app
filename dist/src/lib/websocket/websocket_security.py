@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 from fastapi import WebSocket, status
 
 from casp.auth import Auth
+from casp.runtime_security import is_production_environment
 
 # ====
 # WebSocket security: ONE guard that reuses Caspian's `Auth` as the source of
@@ -21,7 +22,9 @@ from casp.auth import Auth
 
 
 def _is_production() -> bool:
-    return os.getenv("APP_ENV") == "production"
+    # Shared fail-closed resolution: an unset or misspelled APP_ENV must not
+    # silently enable the development handshake relaxations below.
+    return is_production_environment()
 
 
 def _normalized_origin(value: str) -> str:
@@ -69,7 +72,15 @@ def is_websocket_origin_allowed(websocket: WebSocket) -> bool:
         return parsed_origin.scheme == "http"
 
     allowed_origins = _configured_websocket_origins()
-    allowed_origins.add(_websocket_same_origin(websocket))
+
+    # The same-origin fallback is derived from the Host header, which a client
+    # controls directly and a misconfigured proxy will forward verbatim: sending
+    # `Host: evil.tld` with `Origin: https://evil.tld` would otherwise satisfy
+    # this check against itself. It is a convenience for development only --
+    # production must name its origins explicitly.
+    if not _is_production():
+        allowed_origins.add(_websocket_same_origin(websocket))
+
     return origin in allowed_origins
 
 
@@ -127,13 +138,38 @@ async def _reject(websocket: WebSocket, message: str) -> None:
     await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
 
 
-class WebSocketConnectionManager:
-    def __init__(self) -> None:
-        self._connections: set[WebSocket] = set()
+# Ceiling on simultaneous sockets in one pool. Every open connection is a live
+# task plus a broadcast target, so an unbounded pool lets cheap clients grow
+# server memory and turn each broadcast into an amplification.
+MAX_WEBSOCKET_CONNECTIONS = max(
+    1, int(os.getenv("MAX_WEBSOCKET_CONNECTIONS", 200))
+)
 
-    async def connect(self, websocket: WebSocket) -> None:
+
+class WebSocketConnectionManager:
+    def __init__(self, max_connections: int = MAX_WEBSOCKET_CONNECTIONS) -> None:
+        self._connections: set[WebSocket] = set()
+        self._max_connections = max_connections
+
+    @property
+    def connection_count(self) -> int:
+        return len(self._connections)
+
+    async def connect(self, websocket: WebSocket) -> bool:
+        """Accept and register the socket. Returns False when the pool is full.
+
+        The capacity check runs before `accept()`, so a refused client is closed
+        during the handshake and never reaches an open state. The caller must
+        stop on a False result rather than run a read loop on a socket that was
+        never added to the pool.
+        """
+        if len(self._connections) >= self._max_connections:
+            await websocket.close(code=status.WS_1013_TRY_AGAIN_LATER)
+            return False
+
         await websocket.accept()
         self._connections.add(websocket)
+        return True
 
     def disconnect(self, websocket: WebSocket) -> None:
         self._connections.discard(websocket)

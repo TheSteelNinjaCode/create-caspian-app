@@ -44,7 +44,9 @@ def project_info() -> dict[str, Any]:
 
     return {
         "projectName": config.get("projectName") or package.get("name") or PROJECT_ROOT.name,
-        "projectRoot": str(PROJECT_ROOT),
+        # The absolute filesystem path is deliberately not returned: it tells a
+        # caller the server's directory layout and OS user for no functional
+        # gain, and every other tool here reports workspace-relative paths.
         "packageVersion": package.get("version"),
         "caspianVersion": config.get("version"),
         "browserSyncTarget": config.get("bsTarget"),
