@@ -1,7 +1,8 @@
 # App tests & quality gate
 
-Type check + lint + tests for the **application** code (`main.py`, `src/**`) —
-not the Caspian framework under `.venv/` or `node_modules/`.
+Type check + lint + template lint + tests for the **application** code
+(`main.py`, `src/**`, and authored markup) — not the Caspian framework under
+`.venv/` or `node_modules/`.
 
 ## The command
 
@@ -10,15 +11,51 @@ npm run check
 ```
 
 That is the single production gate. It runs **pyright** (types), **ruff**
-(lint), and **pytest** (tests) in one pass, prints every problem as
-`path:line:col  [tool:code] message`, and exits non-zero on failure — so CI,
-a pre-commit hook, or an agent is told exactly which file and location to fix.
+(lint), **templates** (markup lint), and **pytest** (tests) in one pass, prints
+every problem as `path:line:col  [tool:code] message`, and exits non-zero on
+failure — so CI, a pre-commit hook, or an agent is told exactly which file and
+location to fix.
 
 While debugging you can narrow to one tool:
 
 ```bash
-uv run python settings/check.py --only pyright   # or ruff / pytest
+uv run python settings/check.py --only pyright   # or ruff / templates / pytest
 ```
+
+## The `templates` check
+
+`settings/check_templates.py` scans `src/**/*.html` and the markup inside
+single-file Python components for JSX and directives PulsePoint does not have.
+
+PulsePoint borrows React's hook API inside `<script>` and React's component
+decomposition — never React's markup syntax. Before this check existed, the
+whole `.html` surface was unvalidated, and two failures shipped repeatedly:
+
+- `{users.map(user => (<tr/>))}` renders one literal row plus stray text.
+- `class={...}` (unquoted) is **invalid HTML** — the parser shreds the element,
+  the component root never compiles, and the route serves a blank page with *no
+  console error at all*.
+
+It skips `<script>`, `<pre>`/`<code>`, and HTML comments, so real component
+JavaScript (`rows.map(...)` is correct there) and documentation samples do not
+trip it. Run it alone with:
+
+```bash
+uv run python settings/check_templates.py
+```
+
+Its own coverage lives in `tests/test_check_templates.py`, which asserts both
+directions — every JSX shape is caught, and correct markup stays silent — plus a
+repo-wide assertion that `src/` is currently clean.
+
+## Browser errors in the dev terminal
+
+`npm run dev` now forwards PulsePoint's browser-side `[PP-ERROR]` / `[PP-WARN]`
+output, uncaught errors, and unhandled rejections into the terminal, so a broken
+route is visible without opening DevTools. See the `AGENTS.md` entry for how the
+pieces fit (`settings/dev-log-bridge.ts` + `_inject_dev_console_bridge` in
+`main.py`). It is development-only: the injecting branch is gated on
+`CASPIAN_BROWSER_SYNC_PORT`, which only the dev stack sets.
 
 ## Auto-fixing lint issues
 

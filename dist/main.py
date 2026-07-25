@@ -13,6 +13,7 @@ import importlib.util
 import secrets
 import traceback
 import json
+import math
 import time
 from pathlib import Path
 from fastapi import (
@@ -23,7 +24,12 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse
+from fastapi.responses import (
+    RedirectResponse,
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+)
 from starlette.datastructures import MutableHeaders
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
@@ -41,7 +47,7 @@ from casp.auth import (
     GithubProvider,
     configure_auth,
 )
-from casp.rpc import register_rpc_routes
+from casp.rpc import register_rpc_routes, rpc_limiter
 from casp.layout import (
     render_with_nested_layouts,
     compile_template,
@@ -57,9 +63,11 @@ from urllib.parse import urlparse
 from bs4.element import NavigableString, Tag
 from src.lib.auth.auth_config import build_auth_settings
 from casp.runtime_security import (
+    INLINE_SAFE_UPLOAD_MEDIA_TYPES,
     build_security_headers,
     client_error_message,
     get_session_secret,
+    is_production_environment,
     public_file_response,
 )
 from contextlib import (
@@ -71,6 +79,11 @@ from collections.abc import Callable
 
 load_dotenv()
 cfg = get_config()
+
+# Declared before the MCP block below, which needs it to decide whether an
+# unauthenticated endpoint or an open CORS policy is tolerable. Resolved
+# fail-closed: only an explicit development APP_ENV turns the relaxations on.
+IS_PRODUCTION = is_production_environment()
 
 # ====
 # CORS configuration (shared .env convention, mirrors casp.rpc origin checks)
@@ -109,9 +122,15 @@ def _build_mcp_cors_middleware() -> "Middleware":
     allow_credentials = _bool_env("CORS_ALLOW_CREDENTIALS")
 
     if not origins:
-        # The CORS spec forbids "*" together with credentials, so when no
-        # explicit origin is configured fall back to open + no credentials.
-        origins = ["*"]
+        # No configured origin. In development, fall back to open + no
+        # credentials so browser MCP clients (Inspector "Direct") still work --
+        # the CORS spec forbids "*" together with credentials anyway. In
+        # production, "*" would let any site on the internet read the MCP
+        # endpoint's responses, so deny cross-origin instead of guessing.
+        if IS_PRODUCTION:
+            origins = []
+        else:
+            origins = ["*"]
         allow_credentials = False
 
     methods = _csv_env("CORS_ALLOWED_METHODS") or [
@@ -144,6 +163,71 @@ def _build_mcp_cors_middleware() -> "Middleware":
     )
 
 
+class MCPAuthMiddleware:
+    """Bearer-token gate for the mounted MCP endpoint.
+
+    The MCP app is mounted outside the page-routing tree, so `AuthMiddleware`
+    never protects it: `is_private_route("/mcp")` is false under the app's
+    public-first policy, and an MCP client is not a browser carrying a session
+    cookie anyway. Without this guard the endpoint answers anyone on the
+    internet, and its tools enumerate the workspace's generated file inventory
+    and component map.
+
+    `MCP_AUTH_TOKEN` in .env is the credential. When it is unset the endpoint
+    stays open in development (local tooling, MCP Inspector) but refuses every
+    request in production rather than silently serving workspace metadata.
+    """
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # CORS preflight carries no Authorization header by design, and the
+        # CORS layer outside this one answers it without reaching the tools.
+        if scope.get("method") == "OPTIONS":
+            await self.app(scope, receive, send)
+            return
+
+        expected_token = (os.getenv("MCP_AUTH_TOKEN") or "").strip()
+
+        if not expected_token:
+            if IS_PRODUCTION:
+                await self._deny(
+                    send,
+                    503,
+                    "MCP endpoint is disabled: MCP_AUTH_TOKEN is not configured.",
+                )
+                return
+            await self.app(scope, receive, send)
+            return
+
+        header = Request(scope, receive, send).headers.get("authorization", "")
+        scheme, _, presented = header.partition(" ")
+        if scheme.lower() != "bearer" or not secrets.compare_digest(
+            presented.strip(), expected_token
+        ):
+            await self._deny(send, 401, "Invalid or missing MCP bearer token.")
+            return
+
+        await self.app(scope, receive, send)
+
+    async def _deny(self, send: Send, status_code: int, message: str):
+        response = JSONResponse({"error": message}, status_code=status_code)
+
+        async def receive_empty_body():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        await response(
+            {"type": "http", "method": "POST", "path": "/", "headers": []},
+            receive=receive_empty_body,
+            send=send,
+        )
+
+
 # ====
 # MCP SERVER (mounted into this app so one deploy serves web + MCP)
 # ====
@@ -153,7 +237,14 @@ if cfg.mcp:
     # caspian.config.json, so suppress the static "module not found" check.
     from src.lib.mcp.mcp_server import mcp  # type: ignore[import-not-found]
     # Inner path "/" so the mount prefix below is the full endpoint path.
-    mcp_app = mcp.http_app(path="/", middleware=[_build_mcp_cors_middleware()])
+    # CORS is outermost so preflight is answered before the token check.
+    mcp_app = mcp.http_app(
+        path="/",
+        middleware=[
+            _build_mcp_cors_middleware(),
+            Middleware(MCPAuthMiddleware),
+        ],
+    )
 
 # ====
 # AUTH CONFIGURATION (App behavior - customize here)
@@ -243,7 +334,6 @@ async def healthcheck():
 # ====
 SESSION_LIFETIME_HOURS = int(os.getenv('SESSION_LIFETIME_HOURS', 7))
 MAX_CONTENT_LENGTH_MB = int(os.getenv('MAX_CONTENT_LENGTH_MB', 16))
-IS_PRODUCTION = os.getenv('APP_ENV') == 'production'
 CACHE_ENABLED = os.getenv('CACHE_ENABLED', 'false').lower() == 'true'
 DEFAULT_TTL = int(os.getenv('CACHE_TTL', 600))
 REQUEST_TIMEOUT_SECONDS = max(
@@ -255,6 +345,9 @@ REQUEST_TIMEOUT_SECONDS = max(
 # keeps GET /mcp/ open indefinitely; wrapping it in asyncio.wait_for cancels the
 # stream mid-response and corrupts the ASGI message sequence.
 STREAMING_PATH_PREFIXES = ('/mcp',)
+# Public assets: exempt from auth, request logging, and rate limiting, since one
+# page load pulls many of them.
+STATIC_PATH_PREFIXES = ('/css/', '/js/', '/assets/', '/favicon.ico')
 MAX_CONTENT_LENGTH_BYTES = max(1, MAX_CONTENT_LENGTH_MB) * 1024 * 1024
 
 
@@ -272,6 +365,13 @@ def _get_session_secret() -> str:
 
 def _build_security_headers() -> dict[str, str]:
     return build_security_headers(is_production=IS_PRODUCTION)
+
+
+# The header set depends only on IS_PRODUCTION, so build it once at import time
+# instead of allocating an identical dict on every single response.
+SECURITY_HEADERS: tuple[tuple[str, str], ...] = tuple(
+    _build_security_headers().items()
+)
 
 
 def _dev_cookie_scope() -> str:
@@ -336,7 +436,14 @@ async def serve_assets(filename: str):
 
 @app.get('/uploads/{filename:path}')
 async def serve_uploads(filename: str):
-    return public_file_response('public/uploads', filename)
+    # User-supplied content served from the app's own origin: only real images
+    # render inline, everything else downloads. An uploaded .html or .svg would
+    # otherwise be stored XSS with full access to the session cookie.
+    return public_file_response(
+        'public/uploads',
+        filename,
+        inline_safe_media_types=INLINE_SAFE_UPLOAD_MEDIA_TYPES,
+    )
 
 
 @app.get('/favicon.ico')
@@ -360,6 +467,14 @@ class CSRFMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+
+        # Static assets carry no session and never issue RPC calls. Attaching a
+        # Set-Cookie to them makes every asset response uncacheable by shared
+        # caches and CDNs for no security benefit.
+        if scope.get("path", "").startswith(STATIC_PATH_PREFIXES):
+            await self.app(scope, receive, send)
+            return
+
         request = Request(scope, receive, send)
         csrf_token = request.session.get("csrf_token")
         if not csrf_token:
@@ -392,7 +507,7 @@ class SecurityHeadersMiddleware:
             if message["type"] == "http.response.start":
                 raw_headers = list(message.get("headers", []))
                 headers = MutableHeaders(raw=raw_headers)
-                for name, value in _build_security_headers().items():
+                for name, value in SECURITY_HEADERS:
                     if headers.get(name) is None:
                         headers[name] = value
                 message = {**message, "headers": raw_headers}
@@ -473,7 +588,7 @@ class AuthMiddleware:
             return
         request = Request(scope, receive, send)
         path = request.url.path
-        if path.startswith(('/css/', '/js/', '/assets/', '/favicon.ico')):
+        if path.startswith(STATIC_PATH_PREFIXES):
             await self.app(scope, receive, send)
             return
         StateManager.init(request)
@@ -540,6 +655,74 @@ class RPCMiddleware:
         await self.app(scope, receive, send)
 
 
+RATE_LIMIT_PAGES = os.getenv('RATE_LIMIT_PAGES', '200/minute')
+
+
+def client_ip(request: Request) -> str:
+    """Best-effort client address for rate-limit bucketing.
+
+    Behind a reverse proxy every request arrives from the proxy's address, which
+    would collapse all users into one bucket and make limiting useless. The
+    forwarded chain is only consulted when the deployment opts in via
+    `TRUST_FORWARDED_HEADERS`, because a client can otherwise set that header
+    itself and mint a fresh bucket per request.
+    """
+    if _bool_env('TRUST_FORWARDED_HEADERS'):
+        forwarded = request.headers.get('x-forwarded-for', '')
+        first_hop = forwarded.split(',', 1)[0].strip()
+        if first_hop:
+            return first_hop
+
+    return request.client.host if request.client else 'unknown'
+
+
+class RateLimitMiddleware:
+    """Per-IP request cap on page routes.
+
+    Caspian ships `slowapi` with a `RATE_LIMIT_DEFAULT`, but its
+    `SlowAPIMiddleware` is never added to the stack, so that setting has no
+    effect and page routes -- including sign-in -- accept unlimited attempts.
+    This restores an actual limit using the same bucket implementation the RPC
+    layer already uses.
+
+    Static assets and `/health` are exempt on purpose: one page load pulls many
+    CSS/JS/image requests, so counting them against a page budget would throttle
+    normal browsing long before it throttled an attacker.
+    """
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http" or not RATE_LIMIT_PAGES:
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        if path.startswith(STATIC_PATH_PREFIXES) or path == '/health':
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive, send)
+        allowed, wait_seconds = rpc_limiter.check(
+            '__page__', client_ip(request), RATE_LIMIT_PAGES
+        )
+
+        if not allowed:
+            response = HTMLResponse(
+                content=(
+                    "<h1>429 - Too Many Requests</h1>"
+                    "<p>Please slow down and try again shortly.</p>"
+                ),
+                status_code=429,
+                headers={"Retry-After": str(math.ceil(wait_seconds))},
+            )
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+
 class RequestDiagnosticsMiddleware:
     """Log request start/end in dev and fail visibly when a route stalls."""
 
@@ -552,8 +735,7 @@ class RequestDiagnosticsMiddleware:
 
         method = scope.get("method", "GET")
         path = scope.get("path", "")
-        should_log = not path.startswith(
-            ('/css/', '/js/', '/assets/', '/favicon.ico'))
+        should_log = not path.startswith(STATIC_PATH_PREFIXES)
         started = time.perf_counter()
 
         if should_log and not IS_PRODUCTION:
@@ -613,6 +795,42 @@ MAX_WEBSOCKET_MESSAGE_BYTES = max(
     256,
     int(os.getenv('MAX_WEBSOCKET_MESSAGE_BYTES', 4096)),
 )
+# Messages one connection may send per rolling window. Each accepted message
+# fans out to every socket in the pool, so an unthrottled client turns a single
+# cheap connection into a broadcast flood against everyone else.
+MAX_WEBSOCKET_MESSAGES_PER_WINDOW = max(
+    1,
+    int(os.getenv('MAX_WEBSOCKET_MESSAGES_PER_WINDOW', 20)),
+)
+WEBSOCKET_RATE_WINDOW_SECONDS = max(
+    1,
+    int(os.getenv('WEBSOCKET_RATE_WINDOW_SECONDS', 10)),
+)
+
+
+class WebSocketMessageRate:
+    """Sliding-window send budget for a single connection.
+
+    Kept per-socket rather than per-IP: the pool is the shared resource being
+    protected, and one abusive connection should not be able to spend another
+    client's budget.
+    """
+
+    def __init__(self, limit: int, window_seconds: int):
+        self._limit = limit
+        self._window_seconds = window_seconds
+        self._timestamps: list[float] = []
+
+    def allow(self) -> bool:
+        now = time.monotonic()
+        cutoff = now - self._window_seconds
+        self._timestamps = [t for t in self._timestamps if t > cutoff]
+
+        if len(self._timestamps) >= self._limit:
+            return False
+
+        self._timestamps.append(now)
+        return True
 
 
 async def _run_websocket_channel(
@@ -621,7 +839,14 @@ async def _run_websocket_channel(
     payload: dict[str, Any] | None,
     ready_message: str,
 ):
-    await manager.connect(websocket)
+    if not await manager.connect(websocket):
+        # Pool at capacity; `connect` already closed with 1013 (try again later).
+        return
+
+    message_rate = WebSocketMessageRate(
+        MAX_WEBSOCKET_MESSAGES_PER_WINDOW,
+        WEBSOCKET_RATE_WINDOW_SECONDS,
+    )
     ready_payload: dict[str, Any] = {
         "type": "ready",
         "message": ready_message,
@@ -644,6 +869,14 @@ async def _run_websocket_channel(
             if len(raw_message.encode("utf-8")) > MAX_WEBSOCKET_MESSAGE_BYTES:
                 await websocket.close(code=status.WS_1009_MESSAGE_TOO_BIG)
                 return
+
+            # Checked before parsing so a flood costs nothing but the read.
+            if not message_rate.allow():
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Too many messages. Slow down.",
+                })
+                continue
 
             try:
                 message = json.loads(raw_message)
@@ -839,6 +1072,29 @@ def _coerce_query_param(request: Request, name: str, param: inspect.Parameter) -
     return _coerce_scalar(request.query_params.get(name), ann)
 
 
+def is_request_cacheable(request: Request) -> bool:
+    """Whether this request's rendered HTML may enter the shared page cache.
+
+    `CacheHandler` keys entries on the URI alone, with no session component, so
+    a page rendered for a signed-in user would be written to `caches/` in plain
+    text and later served verbatim to whoever asks for that URL next --
+    including a different user or an anonymous visitor. Only GETs from
+    unauthenticated sessions are eligible.
+
+    The check is deliberately on the *request*, not the route: a route does not
+    know whether the page it just rendered contains per-user data, so the
+    presence of an authenticated session is the safe signal.
+    """
+    if request.method != 'GET':
+        return False
+
+    try:
+        return not Auth.get_instance().is_authenticated()
+    except Exception:
+        # An unreadable session means we cannot prove the response is generic.
+        return False
+
+
 def register_routes():
     idx = get_files_index()
     for route in idx.routes:
@@ -855,9 +1111,10 @@ def register_single_route(url_pattern: str, file_path: str):
 
         kwargs = dict(request.path_params)
         current_uri = request.url.path
+        request_is_cacheable = is_request_cacheable(request)
 
         # 1. Cache Check (Fast Path)
-        if CACHE_ENABLED and request.method == 'GET':
+        if CACHE_ENABLED and request_is_cacheable:
             cached_resp = CacheHandler.serve_cache(current_uri, DEFAULT_TTL)
             if cached_resp:
                 return HTMLResponse(content=cached_resp)
@@ -971,7 +1228,10 @@ def register_single_route(url_pattern: str, file_path: str):
         else:
             should_cache = CACHE_ENABLED
 
-        if should_cache and request.method == 'GET':
+        # A route opting in with `Cache(...)` still cannot override the
+        # per-request check: an authenticated render must never be written to
+        # the shared, URI-keyed cache on disk.
+        if should_cache and request_is_cacheable:
             ttl_to_save = req_cache_ttl if req_cache_ttl > 0 else DEFAULT_TTL
             CacheHandler.save_cache(current_uri, html_output, ttl_to_save)
 
@@ -1019,9 +1279,32 @@ def defer_component_roots(html_output: str) -> str:
 
     masked_html, placeholders = mask_escaped_brace_entities(html_output)
     soup = parse_fragment(masked_html)
+    return _defer_component_roots_in_soup(soup, placeholders, html_output)
+
+
+def _defer_component_roots_in_soup(
+    soup,
+    placeholders,
+    fallback_html: str,
+    soup_is_dirty: bool = False,
+) -> str:
+    """Shared body of :func:`defer_component_roots`, operating on a parsed soup.
+
+    Split out so ``finalize_html`` can run the script tagging and the component
+    deferral over ONE parse of the document instead of parsing and serializing
+    the whole page twice in a row. ``soup_is_dirty`` says the caller already
+    mutated the tree, so the early-exit paths must serialize rather than hand
+    back the untouched source string.
+    """
+    def unchanged() -> str:
+        if soup_is_dirty:
+            return restore_escaped_brace_entities(
+                serialize_fragment(soup), placeholders)
+        return fallback_html
+
     body = soup.body
     if body is None:
-        return html_output
+        return unchanged()
 
     roots = [
         el for el in body.select('[pp-component]')
@@ -1031,7 +1314,7 @@ def defer_component_roots(html_output: str) -> str:
         )
     ]
     if not roots:
-        return html_output
+        return unchanged()
 
     for root in roots:
         key = root.get('pp-component')
@@ -1042,43 +1325,93 @@ def defer_component_roots(html_output: str) -> str:
         root.insert_before(template)
         template.append(root.extract())
 
-    for template in body.select('template[pp-component]'):
-        for node in list(template.descendants):
-            if isinstance(node, NavigableString):
-                content = str(node)
-                for placeholder, entity in placeholders.items():
-                    if entity.lower() in {'&lbrace;', '&#123;', '&#x7b;'}:
-                        content = content.replace(
-                            placeholder, '__PP_ESCAPED_LEFT_BRACE__')
-                    else:
-                        content = content.replace(
-                            placeholder, '__PP_ESCAPED_RIGHT_BRACE__')
-                if content != str(node):
-                    node.replace_with(content)
-            elif isinstance(node, Tag):
-                for name, value in node.attrs.items():
-                    if not isinstance(value, str):
-                        continue
-                    for placeholder, entity in placeholders.items():
-                        if entity.lower() in {'&lbrace;', '&#123;', '&#x7b;'}:
-                            value = value.replace(
-                                placeholder, '__PP_ESCAPED_LEFT_BRACE__')
-                        else:
-                            value = value.replace(
-                                placeholder, '__PP_ESCAPED_RIGHT_BRACE__')
-                    node.attrs[name] = value
+    # Only pages that authored literal brace entities need the descendant walk.
+    # Skipping it when there are none avoids touching every node and attribute
+    # of the document for no reason, which is the overwhelmingly common case.
+    if placeholders:
+        _LEFT_BRACE_ENTITIES = {'&lbrace;', '&#123;', '&#x7b;'}
+        brace_markers = {
+            placeholder: (
+                '__PP_ESCAPED_LEFT_BRACE__'
+                if entity.lower() in _LEFT_BRACE_ENTITIES
+                else '__PP_ESCAPED_RIGHT_BRACE__'
+            )
+            for placeholder, entity in placeholders.items()
+        }
+        for template in body.select('template[pp-component]'):
+            for node in list(template.descendants):
+                if isinstance(node, NavigableString):
+                    original = str(node)
+                    content = original
+                    for placeholder, marker in brace_markers.items():
+                        content = content.replace(placeholder, marker)
+                    if content != original:
+                        node.replace_with(content)
+                elif isinstance(node, Tag):
+                    for name, value in node.attrs.items():
+                        if not isinstance(value, str):
+                            continue
+                        for placeholder, marker in brace_markers.items():
+                            value = value.replace(placeholder, marker)
+                        node.attrs[name] = value
 
     return restore_escaped_brace_entities(serialize_fragment(soup), placeholders)
+
+
+# Dev-only: the browser console bridge. `CASPIAN_BROWSER_SYNC_PORT` is set only
+# by settings/python-server.ts when the dev stack spawns this process, so the tag
+# cannot reach production, a static export, or a directly-run server.
+#
+# The script itself is served by BrowserSync's devLogMiddleware at this path; it
+# forwards `[PP-ERROR]` / `[PP-WARN]` output and uncaught errors to the terminal
+# running `npm run dev`. Without it, a broken template reports only to DevTools,
+# which is how JSX-in-a-template kept shipping unnoticed.
+#
+# Injected as a classic script in <head> so it runs during parse, before the
+# deferred module that boots PulsePoint — otherwise the first mount errors, the
+# ones worth seeing, would fire before the hook exists.
+_DEV_CONSOLE_BRIDGE_TAG = '<script src="/__pp-devlog.js"></script>'
+
+
+def _inject_dev_console_bridge(html_output: str) -> str:
+    if not os.getenv("CASPIAN_BROWSER_SYNC_PORT"):
+        return html_output
+    if '</head>' not in html_output or '__pp-devlog.js' in html_output:
+        return html_output
+    return html_output.replace(
+        '</head>', f'{_DEV_CONSOLE_BRIDGE_TAG}</head>', 1
+    )
 
 
 def finalize_html(html_output: str) -> str:
     """Final full-document transforms applied just before the response.
 
-    Runs ``transform_scripts`` (author ``<script>`` -> ``type="text/pp"``) then
-    ``defer_component_roots`` so scripts are tagged before they are moved into
-    the inert component ``<template>``.
+    Tags author ``<script>`` elements as ``type="text/pp"`` and then wraps the
+    outermost ``pp-component`` roots in an inert ``<template>``. Both steps run
+    over a SINGLE parse of the document: previously ``transform_scripts`` and
+    ``defer_component_roots`` each parsed and re-serialized the whole page,
+    which meant two full BeautifulSoup round-trips on every response.
     """
-    return defer_component_roots(transform_scripts(html_output))
+    html_output = _inject_dev_console_bridge(html_output)
+
+    if 'pp-component' not in html_output:
+        # Nothing to defer, so fall back to the standalone script transform.
+        return transform_scripts(html_output)
+
+    masked_html, placeholders = mask_escaped_brace_entities(html_output)
+    soup = parse_fragment(masked_html)
+    body = soup.body
+    if body is None:
+        return transform_scripts(html_output)
+
+    tagged_script = False
+    for script in body.find_all('script'):
+        if not script.has_attr('type'):
+            script['type'] = 'text/pp'
+            tagged_script = True
+
+    return _defer_component_roots_in_soup(
+        soup, placeholders, html_output, soup_is_dirty=tagged_script)
 
 
 register_routes()
@@ -1175,6 +1508,9 @@ app.add_middleware(
     path='/',
 )
 app.add_middleware(BodySizeLimitMiddleware)
+# Outermost of the security layers: reject flooding before any session
+# decryption, template rendering, or database work is spent on the request.
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
 if not IS_PRODUCTION:

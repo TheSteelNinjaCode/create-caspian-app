@@ -21,6 +21,7 @@ import chalk from "chalk";
 import { networkInterfaces, platform } from "os";
 import { promisify } from "util";
 import caspianConfig from "../caspian.config.json";
+import { devLogMiddleware } from "./dev-log-bridge.js";
 
 const { __dirname } = getFileMeta();
 const bs: BrowserSyncInstance = browserSync.create();
@@ -387,6 +388,9 @@ async function shutdown(exitCode: number): Promise<void> {
           res.setHeader("Expires", "0");
           next();
         },
+        // Serves the console hook and receives its reports, so browser-side
+        // PulsePoint errors show up in this terminal instead of only in DevTools.
+        devLogMiddleware,
       ],
       notify: false,
       open: false,

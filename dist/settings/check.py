@@ -1,8 +1,12 @@
-"""App-level quality gate: type check + lint + tests in one command.
+"""App-level quality gate: type check + lint + template lint + tests in one command.
 
-Runs the three app-owned checks against `main.py` and `src/**` and prints a
-single, AI-friendly list of problems as `path:line:col` with the message, so
-an agent (or a human) is told exactly which file and location to fix.
+Runs the four app-owned checks against `main.py`, `src/**`, and authored markup,
+then prints a single, AI-friendly list of problems as `path:line:col` with the
+message, so an agent (or a human) is told exactly which file and location to fix.
+
+The `templates` check covers `.html` templates and the markup inside single-file
+Python components -- the surface the other three tools cannot see. See
+`check_templates.py` for why that gap mattered.
 
 Usage (from the project root):
 
@@ -27,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import _component_imports as ci
+import check_templates as ct
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -237,6 +242,28 @@ def run_ruff() -> Result:
     return Result("ruff", ok=not issues, issues=issues)
 
 
+def run_templates() -> Result:
+    """Lint authored markup for JSX and unsupported PulsePoint directives.
+
+    pyright/ruff/pytest cover Python only, which left `.html` templates entirely
+    unchecked. That is where the most expensive failure lives: an unquoted brace
+    attribute is invalid HTML, so the component root never compiles and the route
+    serves a blank page with no console error at all.
+    """
+    issues = [
+        Issue(
+            path=item.path,
+            line=item.line,
+            column=item.column,
+            tool="templates",
+            code=item.code,
+            message=item.message,
+        )
+        for item in ct.lint_templates()
+    ]
+    return Result("templates", ok=not issues, issues=issues)
+
+
 def run_pytest() -> Result:
     # `-o addopts=` drops the ini `-q` so `-v` can print one live line per test
     # (the "which test is running" progress); `-rfE` keeps the `FAILED nodeid -
@@ -344,12 +371,12 @@ def main() -> int:
     parser.add_argument(
         "--only",
         action="append",
-        choices=["pyright", "ruff", "pytest"],
+        choices=["pyright", "ruff", "templates", "pytest"],
         help="Run only the named tool(s). Repeatable. Default: all.",
     )
     args = parser.parse_args()
 
-    selected = args.only or ["pyright", "ruff", "pytest"]
+    selected = args.only or ["pyright", "ruff", "templates", "pytest"]
 
     print()
     print(bold("Caspian app checks") + "  (live progress)")
@@ -360,6 +387,8 @@ def main() -> int:
         results.append(_execute("pyright", run_pyright, streamed=False))
     if "ruff" in selected:
         results.append(_execute("ruff", run_ruff, streamed=False))
+    if "templates" in selected:
+        results.append(_execute("templates", run_templates, streamed=False))
     if "pytest" in selected:
         results.append(_execute("pytest", run_pytest, streamed=True))
 
