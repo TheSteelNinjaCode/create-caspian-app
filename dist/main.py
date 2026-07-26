@@ -567,7 +567,10 @@ class AuthMiddleware:
             required_roles = auth_inst.get_required_roles(path)
             if required_roles:
                 if not is_authenticated:
-                    await RedirectResponse(url=f'/signin?next={path}', status_code=303)(scope, receive, send)
+                    await RedirectResponse(
+                        url=auth_inst.get_signin_redirect(path),
+                        status_code=303,
+                    )(scope, receive, send)
                     return
                 if not auth_inst.check_role(auth_inst.get_payload(), required_roles):
                     await RedirectResponse(url='/unauthorized', status_code=303)(scope, receive, send)
@@ -575,7 +578,10 @@ class AuthMiddleware:
 
         if auth_inst.is_private_route(path):
             if not is_authenticated:
-                await RedirectResponse(url=f'/signin?next={path}', status_code=303)(scope, receive, send)
+                await RedirectResponse(
+                    url=auth_inst.get_signin_redirect(path),
+                    status_code=303,
+                )(scope, receive, send)
                 return
 
         await self.app(scope, receive, send)
