@@ -48,14 +48,45 @@ Its own coverage lives in `tests/test_check_templates.py`, which asserts both
 directions — every JSX shape is caught, and correct markup stays silent — plus a
 repo-wide assertion that `src/` is currently clean.
 
-## Browser errors in the dev terminal
+## Browser errors in the dev terminal — and in a file
 
-`npm run dev` now forwards PulsePoint's browser-side `[PP-ERROR]` / `[PP-WARN]`
+`npm run dev` forwards PulsePoint's browser-side `[PP-ERROR]` / `[PP-WARN]`
 output, uncaught errors, and unhandled rejections into the terminal, so a broken
 route is visible without opening DevTools. See the `AGENTS.md` entry for how the
 pieces fit (`settings/dev-log-bridge.ts` + `_inject_dev_console_bridge` in
 `main.py`). It is development-only: the injecting branch is gated on
 `CASPIAN_BROWSER_SYNC_PORT`, which only the dev stack sets.
+
+The same events are appended to `.casp/browser-log.jsonl`, because stdout only
+reaches whoever owns that terminal. Read it with:
+
+```bash
+npm run logs
+```
+
+`npm run check` prints the same digest at the end of its run, but never lets it
+change the exit code — whether a route has been exercised depends on someone
+opening a browser, and a gate that flaky gets ignored. Use `--fail-on-error` if
+you want a non-zero exit in a script you control.
+
+The log records **successful page loads too**, which is what makes it safe to
+trust: a route's status is whatever happened during its most recent load, so a
+fixed error stops being reported after one clean reload, and an empty log reads
+as "nothing observed" rather than "healthy".
+
+A reload only proves what a reload re-runs. Errors are classified by how long
+after their page load they arrived: a **mount** error is cleared by a later load,
+an **interaction** error (a click handler throwing seconds later) is not — it
+carries forward as `NEEDS RECHECK` until you repeat the interaction. Reporting
+those as clean is how a live bug gets signed off.
+
+Every source change **compacts** the log to the session header, a `restart`
+marker, and the errors still open, so a dev session running for hours cannot grow
+an unbounded file. **Don't diagnose from the raw JSONL** — it is history, not
+state. `npm run logs` derives the current status and costs the same tokens
+regardless of session length. An error with no matching load — a tab left open
+across a dev restart — is reported as `UNCONFIRMED` rather than as a fresh
+failure. Coverage is in `tests/test_browser_log.py`.
 
 ## Auto-fixing lint issues
 

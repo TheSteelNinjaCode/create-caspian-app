@@ -21,7 +21,12 @@ import chalk from "chalk";
 import { networkInterfaces, platform } from "os";
 import { promisify } from "util";
 import caspianConfig from "../caspian.config.json";
-import { devLogMiddleware } from "./dev-log-bridge.js";
+import {
+  compactBrowserLog,
+  devLogMiddleware,
+  endBrowserLogSession,
+  startBrowserLogSession,
+} from "./dev-log-bridge.js";
 
 const { __dirname } = getFileMeta();
 const bs: BrowserSyncInstance = browserSync.create();
@@ -193,6 +198,14 @@ const changeCoordinator = new SettledBatchWorker<string>(
       chalk.cyan(`-> Processing ${batch.length} settled file change(s)...`),
     );
 
+    // Source edits invalidate the browser log: everything in it was produced by
+    // code that just changed. Compact rather than truncate, so an interaction
+    // error nobody has re-tested survives an unrelated save. Keyed on `src:` so
+    // regenerated CSS and other build output do not churn the log.
+    if (srcChanges.length > 0) {
+      compactBrowserLog(`${srcChanges.length} source file change(s)`);
+    }
+
     if (needsGeneratedMetadata) {
       await generateFileListJson();
       await componentMap();
@@ -273,6 +286,10 @@ async function shutdown(exitCode: number): Promise<void> {
 
   shuttingDown = true;
 
+  // Close the browser log first: a reader that finds no end marker treats the
+  // session as abandoned, so a clean exit should say so before anything can hang.
+  endBrowserLogSession();
+
   await closeWatchers();
 
   if (bs.active) {
@@ -298,6 +315,8 @@ async function shutdown(exitCode: number): Promise<void> {
       ),
     );
   }
+
+  startBrowserLogSession(bsPort);
 
   updateRouteFilesCache();
 

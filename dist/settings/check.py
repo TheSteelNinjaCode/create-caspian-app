@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import _component_imports as ci
+import browser_log as bl
 import check_templates as ct
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -374,6 +375,11 @@ def main() -> int:
         choices=["pyright", "ruff", "templates", "pytest"],
         help="Run only the named tool(s). Repeatable. Default: all.",
     )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Skip the browser-log section (see settings/browser_log.py).",
+    )
     args = parser.parse_args()
 
     selected = args.only or ["pyright", "ruff", "templates", "pytest"]
@@ -392,7 +398,17 @@ def main() -> int:
     if "pytest" in selected:
         results.append(_execute("pytest", run_pytest, streamed=True))
 
-    return 0 if print_report(results) else 1
+    ok = print_report(results)
+
+    # Browser status is reported, never enforced. The four tools above are
+    # deterministic; whether a route has been exercised in a browser depends on
+    # someone clicking around, so folding it into the exit code would make the
+    # gate flaky and people would learn to ignore it. Printing it here is enough:
+    # this is the command an agent already runs.
+    if not args.no_browser:
+        bl.print_report(bl.build_report())
+
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
