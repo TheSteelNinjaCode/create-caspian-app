@@ -55,10 +55,6 @@ from casp.caspian_config import get_files_index  # noqa: E402
 OUT_DIR = ROOT / "static"
 PUBLIC_DIR = ROOT / "public"
 
-# Public asset trees to mirror into static/ (source name -> output name).
-ASSET_DIRS = ("css", "js", "assets", "uploads")
-ASSET_FILES = ("favicon.ico",)
-
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
 RED = "\033[31m"
@@ -175,17 +171,9 @@ def _reset_out_dir(out_dir: Path, attempts: int = 5, delay: float = 0.4) -> bool
 
 
 def _copy_assets() -> None:
-    for name in ASSET_DIRS:
-        src = PUBLIC_DIR / name
-        if src.is_dir():
-            dst = OUT_DIR / name
-            shutil.copytree(src, dst, dirs_exist_ok=True)
-            print(f"{DIM}  copied public/{name}/ -> static/{name}/{RESET}")
-    for name in ASSET_FILES:
-        src = PUBLIC_DIR / name
-        if src.is_file():
-            shutil.copy2(src, OUT_DIR / name)
-            print(f"{DIM}  copied public/{name} -> static/{name}{RESET}")
+    if PUBLIC_DIR.is_dir():
+        shutil.copytree(PUBLIC_DIR, OUT_DIR, dirs_exist_ok=True)
+        print(f"{DIM}  copied public/** -> static/{RESET}")
 
 
 def build() -> int:

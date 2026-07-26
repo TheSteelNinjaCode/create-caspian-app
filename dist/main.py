@@ -26,7 +26,6 @@ from fastapi import (
 )
 from fastapi.responses import (
     RedirectResponse,
-    FileResponse,
     HTMLResponse,
     JSONResponse,
 )
@@ -68,7 +67,8 @@ from casp.runtime_security import (
     client_error_message,
     get_session_secret,
     is_production_environment,
-    public_file_response,
+    PublicFilesMiddleware,
+    resolve_safe_public_path,
 )
 from contextlib import (
     asynccontextmanager,
@@ -347,7 +347,6 @@ REQUEST_TIMEOUT_SECONDS = max(
 STREAMING_PATH_PREFIXES = ('/mcp',)
 # Public assets: exempt from auth, request logging, and rate limiting, since one
 # page load pulls many of them.
-STATIC_PATH_PREFIXES = ('/css/', '/js/', '/assets/', '/favicon.ico')
 MAX_CONTENT_LENGTH_BYTES = max(1, MAX_CONTENT_LENGTH_MB) * 1024 * 1024
 
 
@@ -411,49 +410,6 @@ SESSION_COOKIE_NAME = _scoped_cookie_name(
 )
 
 # ====
-# Static File Routes
-# ====
-
-
-@app.get('/css/{filename:path}')
-async def serve_css(filename: str):
-    return public_file_response('public/css', filename, media_type='text/css')
-
-
-@app.get('/js/{filename:path}')
-async def serve_js(filename: str):
-    return public_file_response(
-        'public/js',
-        filename,
-        media_type='application/javascript',
-    )
-
-
-@app.get('/assets/{filename:path}')
-async def serve_assets(filename: str):
-    return public_file_response('public/assets', filename)
-
-
-@app.get('/uploads/{filename:path}')
-async def serve_uploads(filename: str):
-    # User-supplied content served from the app's own origin: only real images
-    # render inline, everything else downloads. An uploaded .html or .svg would
-    # otherwise be stored XSS with full access to the session cookie.
-    return public_file_response(
-        'public/uploads',
-        filename,
-        inline_safe_media_types=INLINE_SAFE_UPLOAD_MEDIA_TYPES,
-    )
-
-
-@app.get('/favicon.ico')
-async def favicon():
-    file_path = Path('public/favicon.ico')
-    if not file_path.exists():
-        return Response(status_code=404)
-    return FileResponse(file_path, media_type='image/x-icon')
-
-# ====
 # Pure ASGI Middleware Classes
 # ====
 
@@ -465,13 +421,6 @@ class CSRFMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-
-        # Static assets carry no session and never issue RPC calls. Attaching a
-        # Set-Cookie to them makes every asset response uncacheable by shared
-        # caches and CDNs for no security benefit.
-        if scope.get("path", "").startswith(STATIC_PATH_PREFIXES):
             await self.app(scope, receive, send)
             return
 
@@ -588,9 +537,6 @@ class AuthMiddleware:
             return
         request = Request(scope, receive, send)
         path = request.url.path
-        if path.startswith(STATIC_PATH_PREFIXES):
-            await self.app(scope, receive, send)
-            return
         StateManager.init(request)
         Auth.set_request(request)
         auth_inst = Auth.get_instance()
@@ -699,7 +645,7 @@ class RateLimitMiddleware:
             return
 
         path = scope.get("path", "")
-        if path.startswith(STATIC_PATH_PREFIXES) or path == '/health':
+        if path == '/health':
             await self.app(scope, receive, send)
             return
 
@@ -735,7 +681,14 @@ class RequestDiagnosticsMiddleware:
 
         method = scope.get("method", "GET")
         path = scope.get("path", "")
-        should_log = not path.startswith(STATIC_PATH_PREFIXES)
+        is_public_file = (
+            method in {"GET", "HEAD"}
+            and resolve_safe_public_path(
+                'public',
+                path.lstrip('/'),
+            ) is not None
+        )
+        should_log = not is_public_file
         started = time.perf_counter()
 
         if should_log and not IS_PRODUCTION:
@@ -1511,6 +1464,16 @@ app.add_middleware(BodySizeLimitMiddleware)
 # Outermost of the security layers: reject flooding before any session
 # decryption, template rendering, or database work is spent on the request.
 app.add_middleware(RateLimitMiddleware)
+# The public directory is itself the URL contract: any existing nested file is
+# served without adding a directory-specific route above. Keep upload content
+# in attachment mode unless its MIME type is explicitly safe to render inline.
+app.add_middleware(
+    PublicFilesMiddleware,
+    directory='public',
+    inline_safe_subdirectories={
+        'uploads': INLINE_SAFE_UPLOAD_MEDIA_TYPES,
+    },
+)
 app.add_middleware(SecurityHeadersMiddleware)
 
 if not IS_PRODUCTION:
