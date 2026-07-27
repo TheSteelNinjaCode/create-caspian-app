@@ -1160,7 +1160,6 @@ def register_single_route(url_pattern: str, file_path: str):
         else:
             content = load_template_file(file_path)
 
-        content = await transform_components(content, base_dir=route_dir)
         full_context = {**kwargs, "request": request, **page_layout_props}
 
         html_output, root_layout_id = await render_with_nested_layouts(
