@@ -101,12 +101,27 @@ class TestDeferComponentRoots:
         assert "<template" in out
         assert 'pp-component="abc"' in out
 
-    def test_finalize_html_defers_and_tags_scripts(self):
+    def test_brace_entities_are_double_encoded_inside_deferred_templates(self):
+        html = (
+            '<body><div pp-component="abc" '
+            'title="&#123;attr&#125;" '
+            'class="probe &#x7b;active&#x7d;">'
+            '&lbrace;text&rbrace;'
+            '</div><p>&#123;outside&#125;</p></body>'
+        )
+
+        out = main.defer_component_roots(html)
+
+        assert 'title="&amp;#123;attr&amp;#125;"' in out
+        assert 'class="probe &amp;#x7b;active&amp;#x7d;"' in out
+        assert "&amp;lbrace;text&amp;rbrace;" in out
+        assert "<p>&#123;outside&#125;</p>" in out
+
+    def test_finalize_html_defers_and_preserves_plain_scripts(self):
         html = (
             "<body><div pp-component=\"abc\">"
             "<script>console.log(1)</script></div></body>"
         )
         out = main.finalize_html(html)
-        # transform_scripts retags author scripts before deferral.
-        assert 'type="text/pp"' in out
+        assert "<script>console.log(1)</script>" in out
         assert "<template" in out
