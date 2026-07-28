@@ -229,11 +229,11 @@ There is no `pp-if`, `pp-show`, `pp-else`, or `pp-key`. Conditionals are `hidden
 | `pp-style="{cssText}"`                                          | Any element                                | Dynamic inline style (string) |
 | `pp-spread="{...obj}"`                                          | Any element                                | Spread object into attributes |
 | `<token.provider value="{v}">` (lowercase)                      | Anywhere                                   | Context provider              |
-| `pp-spa="true"` / `pp-spa="false"`                              | `<body>` / an `<a>`                        | SPA navigation opt-in/out     |
+| `pp-spa="false"`                                                | An `<a>`                                   | Opt one link out of SPA navigation, which starts automatically on mount |
 | `pp-reset-scroll="true"`, `pp-scroll-key="name"`                | A scroll container                         | Scroll restoration control    |
 | `pp-loading-content`, `pp-loading-url`, `pp-loading-transition` | Navigation regions                         | Loading UI                    |
 
-Never handwrite runtime-managed attributes (`pp-component`, `type="text/pp"`, `pp-owner`, `pp-ref-owner`, `pp-ref-forward`, `data-pp-*`, …). The render pipeline and the browser runtime write those.
+Never handwrite runtime-managed attributes (`pp-component`, `pp-owner`, `pp-ref-owner`, `pp-ref-forward`, `data-pp-*`, …). Component logic belongs in a plain, untyped `<script>`; the render pipeline and browser runtime capture it safely.
 
 #### The single-root rule
 
@@ -412,7 +412,7 @@ await pp.rpc(name, data?, optionsOrAbort?)
 - Server redirect headers are honored through `pp.redirect()`.
 - Passing `true` as the third argument means `{ abortPrevious: true }`.
 
-Options: `abortPrevious`, `onStream`, `onStreamError`, `onStreamComplete`, `onUploadProgress`, `onUploadComplete`.
+Options: `abortPrevious`, `url`, `csrfUrl`, `credentials`, `onStream`, `onStreamError`, `onStreamComplete`, `onUploadProgress`, `onUploadComplete`.
 
 **Payload safety:** RPC keys are filtered against the function signature, so a parameter is client-settable only when it is declared. Declaring `**kwargs` opts into the whole payload — do that deliberately.
 
