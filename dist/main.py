@@ -1,5 +1,4 @@
 from casp.components_compiler import transform_components
-from casp.scripts_type import transform_scripts
 from casp.html_native import (
     mask_escaped_brace_entities,
     parse_fragment,
@@ -1244,20 +1243,13 @@ def _defer_component_roots_in_soup(
     soup,
     placeholders,
     fallback_html: str,
-    soup_is_dirty: bool = False,
 ) -> str:
     """Shared body of :func:`defer_component_roots`, operating on a parsed soup.
 
-    Split out so ``finalize_html`` can run the script tagging and the component
-    deferral over ONE parse of the document instead of parsing and serializing
-    the whole page twice in a row. ``soup_is_dirty`` says the caller already
-    mutated the tree, so the early-exit paths must serialize rather than hand
-    back the untouched source string.
+    Split out so callers that already parsed the document can reuse the
+    component-deferral pass.
     """
     def unchanged() -> str:
-        if soup_is_dirty:
-            return restore_escaped_brace_entities(
-                serialize_fragment(soup), placeholders)
         return fallback_html
 
     body = soup.body
@@ -1283,35 +1275,37 @@ def _defer_component_roots_in_soup(
         root.insert_before(template)
         template.append(root.extract())
 
-    # Only pages that authored literal brace entities need the descendant walk.
-    # Skipping it when there are none avoids touching every node and attribute
-    # of the document for no reason, which is the overwhelmingly common case.
+    # An HTML parser decodes ``&#123;`` to ``{`` even inside an inert template.
+    # Restore each masked entity into the parsed tree before serialization so
+    # the serializer escapes its ampersand one additional time:
+    #
+    #     &#123; -> &amp;#123;
+    #
+    # The browser consumes that outer layer while parsing the response, leaving
+    # the inner entity intact for PulsePoint to mask before expression scanning.
+    # Placeholders outside deferred component templates are restored normally
+    # after serialization.
     if placeholders:
-        _LEFT_BRACE_ENTITIES = {'&lbrace;', '&#123;', '&#x7b;'}
-        brace_markers = {
-            placeholder: (
-                '__PP_ESCAPED_LEFT_BRACE__'
-                if entity.lower() in _LEFT_BRACE_ENTITIES
-                else '__PP_ESCAPED_RIGHT_BRACE__'
-            )
-            for placeholder, entity in placeholders.items()
-        }
+        def protect_brace_entities(value: str) -> str:
+            protected = value
+            for placeholder, entity in placeholders.items():
+                protected = protected.replace(placeholder, entity)
+            return protected
+
         for template in body.select('template[pp-component]'):
             for node in list(template.descendants):
                 if isinstance(node, NavigableString):
                     original = str(node)
-                    content = original
-                    for placeholder, marker in brace_markers.items():
-                        content = content.replace(placeholder, marker)
+                    content = protect_brace_entities(original)
                     if content != original:
                         node.replace_with(content)
                 elif isinstance(node, Tag):
                     for name, value in node.attrs.items():
-                        if not isinstance(value, str):
-                            continue
-                        for placeholder, marker in brace_markers.items():
-                            value = value.replace(placeholder, marker)
-                        node.attrs[name] = value
+                        if isinstance(value, str):
+                            node.attrs[name] = protect_brace_entities(value)
+                        elif isinstance(value, list):
+                            for index, item in enumerate(value):
+                                value[index] = protect_brace_entities(str(item))
 
     return restore_escaped_brace_entities(serialize_fragment(soup), placeholders)
 
@@ -1344,32 +1338,13 @@ def _inject_dev_console_bridge(html_output: str) -> str:
 def finalize_html(html_output: str) -> str:
     """Final full-document transforms applied just before the response.
 
-    Tags author ``<script>`` elements as ``type="text/pp"`` and then wraps the
-    outermost ``pp-component`` roots in an inert ``<template>``. Both steps run
-    over a SINGLE parse of the document: previously ``transform_scripts`` and
-    ``defer_component_roots`` each parsed and re-serialized the whole page,
-    which meant two full BeautifulSoup round-trips on every response.
+    Injects the development console bridge when enabled, then wraps outermost
+    ``pp-component`` roots in inert ``<template>`` elements. Component scripts
+    remain plain ``<script>`` elements: the surrounding template keeps them
+    inert until PulsePoint materializes and mounts the component boundary.
     """
     html_output = _inject_dev_console_bridge(html_output)
-
-    if 'pp-component' not in html_output:
-        # Nothing to defer, so fall back to the standalone script transform.
-        return transform_scripts(html_output)
-
-    masked_html, placeholders = mask_escaped_brace_entities(html_output)
-    soup = parse_fragment(masked_html)
-    body = soup.body
-    if body is None:
-        return transform_scripts(html_output)
-
-    tagged_script = False
-    for script in body.find_all('script'):
-        if not script.has_attr('type'):
-            script['type'] = 'text/pp'
-            tagged_script = True
-
-    return _defer_component_roots_in_soup(
-        soup, placeholders, html_output, soup_is_dirty=tagged_script)
+    return defer_component_roots(html_output)
 
 
 register_routes()

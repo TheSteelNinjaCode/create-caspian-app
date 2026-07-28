@@ -1,4 +1,4 @@
-import "/js/pp-reactive-v2.js";
+import "/js/pp-reactive-v2.min.js";
 
 const pp = (globalThis).pp;
 
