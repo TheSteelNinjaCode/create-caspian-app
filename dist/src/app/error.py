@@ -1,5 +1,4 @@
 from typing import Optional
-
 from casp.component_decorator import html
 from casp.layout import Metadata
 

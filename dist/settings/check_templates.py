@@ -256,6 +256,109 @@ def _iter_files() -> list[Path]:
     return sorted(files)
 
 
+# ---------------------------------------------------------------------------
+# f-string component returns (ratchet)
+# ---------------------------------------------------------------------------
+# `html(...)` is the single markup entrypoint. A component that returns an
+# f-string instead skips it entirely, and the two forms disagree in ways that
+# are invisible at the call site:
+#
+#   * The brace dialects are INVERTED. `html()` writes `{{ name }}` for server
+#     interpolation and `{count}` for a PulsePoint binding; an f-string writes
+#     `{name}` for the server and needs `{{count}}` to emit a binding. Same
+#     characters, opposite meanings.
+#   * There is no autoescaping. `Component.acall` wraps the returned string in
+#     `Markup`, so interpolated request data is emitted raw AND marked trusted.
+#   * `<x-*>` scope is not stashed, so a directly-called component
+#     (`{{ Card() }}`) cannot resolve nested component tags.
+#
+# The existing returns are recorded in a baseline and allowed; anything new
+# fails the gate. Convert one and delete its baseline line. Regenerate with
+# `python settings/check_templates.py --update-baseline`.
+FSTRING_BASELINE_PATH = PROJECT_ROOT / "settings" / "fstring-components.json"
+
+FSTRING_MESSAGE = (
+    "Component returns an f-string instead of html(...). The brace dialects are "
+    "inverted between the two forms ({{ x }} vs {x}) and an f-string is not "
+    "autoescaped, so interpolated data is emitted raw and marked trusted. "
+    "Return html(r'''...''', x=x) instead."
+)
+
+
+def _fstring_component_returns() -> list[tuple[str, str, int, int]]:
+    """Every `@component` whose return value is an f-string.
+
+    Entries are `(rel_path, function_name, line, column)`, sorted.
+    """
+    import ast
+
+    found: list[tuple[str, str, int, int]] = []
+    for path in _iter_files():
+        if path.suffix != ".py":
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            continue
+        rel = path.relative_to(PROJECT_ROOT).as_posix()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            decorators = {
+                getattr(d, "id", None) or getattr(d, "attr", None)
+                for d in node.decorator_list
+            }
+            if "component" not in decorators:
+                continue
+            for stmt in ast.walk(node):
+                if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.JoinedStr):
+                    found.append((rel, node.name, stmt.lineno, stmt.col_offset + 1))
+                    break
+    return sorted(found)
+
+
+def _load_fstring_baseline() -> set[str]:
+    import json
+
+    try:
+        raw = json.loads(FSTRING_BASELINE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    return set(raw.get("allowed", []))
+
+
+def write_fstring_baseline() -> int:
+    """Record today's f-string components as the allowed set."""
+    import json
+
+    entries = sorted({f"{rel}::{name}" for rel, name, _, _ in _fstring_component_returns()})
+    FSTRING_BASELINE_PATH.write_text(
+        json.dumps(
+            {
+                "_comment": (
+                    "Components that still return an f-string instead of html(...). "
+                    "This list may only shrink: converting one means deleting its "
+                    "line. New entries fail `npm run check`."
+                ),
+                "allowed": entries,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return len(entries)
+
+
+def lint_fstring_components() -> list[TemplateIssue]:
+    allowed = _load_fstring_baseline()
+    return [
+        TemplateIssue(rel, line, col, "fstring-component", FSTRING_MESSAGE)
+        for rel, name, line, col in _fstring_component_returns()
+        if f"{rel}::{name}" not in allowed
+    ]
+
+
 def lint_templates() -> list[TemplateIssue]:
     """Lint every authored template under `src/`."""
     issues: list[TemplateIssue] = []
@@ -270,10 +373,21 @@ def lint_templates() -> list[TemplateIssue]:
             continue
         rel = path.relative_to(PROJECT_ROOT).as_posix()
         issues.extend(lint_text(text, rel, is_python=path.suffix == ".py"))
+    issues.extend(lint_fstring_components())
     return issues
 
 
 def main() -> int:
+    import sys
+
+    if "--update-baseline" in sys.argv:
+        count = write_fstring_baseline()
+        print(
+            f"templates: recorded {count} f-string component(s) in "
+            f"{FSTRING_BASELINE_PATH.relative_to(PROJECT_ROOT).as_posix()}."
+        )
+        return 0
+
     issues = lint_templates()
     if not issues:
         print("templates: no JSX or unknown directives found.")

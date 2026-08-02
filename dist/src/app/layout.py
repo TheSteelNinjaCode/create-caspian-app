@@ -1,5 +1,8 @@
+from casp.component_decorator import html
+
+
 def layout():
-    return r"""
+    return html(r"""
 <!DOCTYPE html>
 <html lang="en">
 
@@ -26,4 +29,4 @@ def layout():
 </body>
 
 </html>
-"""
+""")
