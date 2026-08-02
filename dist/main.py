@@ -48,7 +48,6 @@ from casp.auth import (
 from casp.rpc import register_rpc_routes, rpc_limiter
 from casp.layout import (
     render_with_nested_layouts,
-    compile_template,
     _finalize_page_region,
     _runtime_injections,
     _runtime_metadata,
@@ -1396,25 +1395,83 @@ if mcp_app is not None:
 # ====
 
 
+async def _render_special_page(
+    page_path: str,
+    request: Request,
+    default_metadata: dict[str, str],
+    context_data: dict[str, Any],
+) -> tuple[str, str]:
+    """Render an app-level Python page through the normal page/layout pipeline."""
+    _runtime_metadata.set(None)
+    _runtime_injections.set({"head": [], "body": []})
+
+    module = load_route_module(page_path)
+    if not hasattr(module, "page"):
+        raise AttributeError(f"Missing 'def page():' in {page_path}")
+
+    signature = get_page_signature(page_path, module.page)
+    accepts_kwargs = any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+    call_context = {"request": request, **context_data}
+    call_kwargs = {
+        name: value
+        for name, value in call_context.items()
+        if accepts_kwargs or name in signature.parameters
+    }
+
+    result = module.page(**call_kwargs)
+    if inspect.isawaitable(result):
+        result = await result
+    if isinstance(result, Response):
+        raise TypeError(f"Special page {page_path} must return markup, not a Response")
+
+    page_layout_props: dict[str, Any] = {}
+    page_content = result
+    if isinstance(result, tuple):
+        page_content = result[0]
+        if len(result) >= 2 and isinstance(result[1], dict):
+            page_layout_props = result[1]
+
+    page_metadata = default_metadata.copy()
+    for metadata_obj in (getattr(module, "metadata", None), _runtime_metadata.get()):
+        if not metadata_obj:
+            continue
+        if metadata_obj.title:
+            page_metadata["title"] = metadata_obj.title
+        if metadata_obj.description:
+            page_metadata["description"] = metadata_obj.description
+        if metadata_obj.extra:
+            page_metadata.update(metadata_obj.extra)
+
+    page_source = getattr(page_content, "source_path", page_path)
+    html_output, root_layout_id = await render_with_nested_layouts(
+        children=str(page_content),
+        route_dir=os.path.dirname(page_path),
+        page_metadata=page_metadata,
+        page_layout_props=page_layout_props,
+        context_data={**call_context, **page_layout_props},
+        page_component_source=page_source,
+        control_mode=True,
+        component_compiler=transform_components,
+    )
+    return finalize_html(html_output), root_layout_id
+
+
 @app.exception_handler(StarletteHTTPException)
 async def custom_404_handler(request: Request, exc: StarletteHTTPException):
     if exc.status_code == 404:
-        not_found_path = os.path.join('src', 'app', 'not-found.html')
+        not_found_path = os.path.join('src', 'app', 'not_found.py')
         if os.path.exists(not_found_path):
-            with open(not_found_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            html_output, root_layout_id = await render_with_nested_layouts(
-                children=content,
-                route_dir='src/app',
-                page_metadata={
+            html_output, root_layout_id = await _render_special_page(
+                page_path=not_found_path,
+                request=request,
+                default_metadata={
                     'title': "Page Not Found",
                     'description': "The page you are looking for does not exist."
                 },
-                page_layout_props=None,
-                context_data={'request': request},
-                page_component_source=not_found_path,
-                control_mode=True,
-                transform_fn=finalize_html
+                context_data={},
             )
             resp = HTMLResponse(content=html_output, status_code=404)
             resp.headers['X-PP-Root-Layout'] = root_layout_id
@@ -1429,33 +1486,25 @@ async def custom_general_exception_handler(request: Request, exc: Exception):
     error_message = _client_error_message(exc)
     error_trace = full_trace if not IS_PRODUCTION else None
 
-    error_page_path = os.path.join('src', 'app', 'error.html')
+    error_page_path = os.path.join('src', 'app', 'error.py')
     if os.path.exists(error_page_path):
-        with open(error_page_path, 'r', encoding='utf-8') as f:
-            raw_content = f.read()
         context_data = {'request': request,
                         'error_message': error_message, 'error_trace': error_trace}
         try:
-            rendered_content = compile_template(
-                raw_content).render(**context_data)
-            html_output, root_layout_id = await render_with_nested_layouts(
-                children=rendered_content,
-                route_dir='src/app',
-                page_metadata={
+            html_output, root_layout_id = await _render_special_page(
+                page_path=error_page_path,
+                request=request,
+                default_metadata={
                     'title': 'Application Error',
                     'description': 'An unexpected error occurred.'
                 },
-                page_layout_props=None,
                 context_data=context_data,
-                page_component_source=error_page_path,
-                control_mode=True,
-                transform_fn=finalize_html
             )
             resp = HTMLResponse(content=html_output, status_code=500)
             resp.headers['X-PP-Root-Layout'] = root_layout_id
             return resp
         except Exception as render_exc:
-            print("Error rendering error.html:", render_exc)
+            print("Error rendering error.py:", render_exc)
     return HTMLResponse(
         content=f"<h1>500 - Internal Server Error</h1><p>{error_message}</p>",
         status_code=500
