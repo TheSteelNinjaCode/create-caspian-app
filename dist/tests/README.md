@@ -105,7 +105,7 @@ reported `path:line:col`.
 
 Removing "unused" imports is the one fix that is dangerous in this app. Caspian
 single-file components import their children and then use them only as `<x-*>`
-tags inside `html(...)`/`render_html(...)` template strings (e.g. `from .Dialog
+tags inside `html(...)` template strings (e.g. `from .Dialog
 import DialogContent` → `<x-dialog-content>`). Ruff can't parse the template, so
 it sees the import as unused — but casp resolves the tag from the module's
 globals at render time, so deleting it breaks the page.

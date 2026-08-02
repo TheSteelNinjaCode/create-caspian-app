@@ -50,13 +50,25 @@ npm run dev
 
 ## What "Reactive Python" looks like
 
-A route is a folder. The markup lives in `index.html`, the server logic in `index.py`. Templates are **plain HTML** with `{expression}` interpolation and a small `<script>` for state.
+A route is a folder with one file: `index.py`. The markup lives inline as a template handed to `html(...)`, next to the server logic. Templates are **plain HTML** with `{expression}` interpolation and a small `<script>` for state.
 
-### Route template — `src/app/todos/index.html`
+### The route — `src/app/todos/index.py`
 
-```html
-<!-- @import { Badge } from "../../components/ui/Badge.py" -->
+```python
+from casp.component_decorator import html
+from casp.layout import Metadata
+from casp.rpc import rpc
+from casp.validate import Rule, Validate
+from src.components.ui.Badge import Badge
 
+metadata = Metadata(
+    title="Todos",
+    description="A tiny Caspian todo list.",
+)
+
+
+async def page():
+    return html(r"""
 <section>
   <x-badge variant="default">Tasks: {todos.length}</x-badge>
 
@@ -105,24 +117,7 @@ A route is a folder. The markup lives in `index.html`, the server logic in `inde
     }
   </script>
 </section>
-```
-
-### Backend — `src/app/todos/index.py`
-
-```python
-from casp.layout import Metadata, render_page
-from casp.rpc import rpc
-from casp.validate import Rule, Validate
-from src.lib.prisma import prisma
-
-metadata = Metadata(
-    title="Todos",
-    description="A tiny Caspian todo list.",
-)
-
-
-async def page():
-    return render_page(__file__)
+""")
 
 
 @rpc()
@@ -157,35 +152,31 @@ That is the whole loop: no API routes, no client, no serializer. `pp.rpc("create
 
 Your directory structure under `src/app` is your URL structure.
 
-| File                            | URL           |
-| ------------------------------- | ------------- |
-| `src/app/index.html`            | `/`           |
-| `src/app/about/index.html`      | `/about`      |
-| `src/app/blog/posts/index.html` | `/blog/posts` |
+| File                          | URL           |
+| ----------------------------- | ------------- |
+| `src/app/index.py`            | `/`           |
+| `src/app/about/index.py`      | `/about`      |
+| `src/app/blog/posts/index.py` | `/blog/posts` |
 
 ```
-src/app/users/[id]/index.html        ->  /users/123          (dynamic segment)
-src/app/docs/[...slug]/index.html    ->  /docs/a/b/c         (catch-all)
-src/app/(auth)/login/index.html      ->  /login              (route group, no URL segment)
-src/app/dashboard/layout.html        ->  wraps every /dashboard/* page
+src/app/users/[id]/index.py        ->  /users/123          (dynamic segment)
+src/app/docs/[...slug]/index.py    ->  /docs/a/b/c         (catch-all)
+src/app/(auth)/login/index.py      ->  /login              (route group, no URL segment)
+src/app/dashboard/layout.py        ->  wraps every /dashboard/* page
 ```
 
 #### Route file conventions
 
-| File             | Owns                                                                             |
-| ---------------- | -------------------------------------------------------------------------------- |
-| `index.html`     | The page's authored markup (single root element)                                 |
-| `index.py`       | `metadata`, `page()`, route-owned `@rpc()` actions, redirects, first-render data |
-| `layout.html`    | A section wrapper containing `<slot />`                                          |
-| `layout.py`      | Layout-level props and server logic                                              |
-| `loading.html`   | Navigation loading state for the route                                           |
-| `not-found.html` | 404 UI                                                                           |
-| `error.html`     | Error UI                                                                         |
+| File             | Owns                                                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------------------------------- |
+| `index.py`       | The page: `page()` returning `html(...)` markup, `metadata`, route-owned `@rpc()` actions, redirects, first-render data |
+| `layout.py`      | The section wrapper: `layout()` returning the shell template (with `<slot />`) plus optional props and server logic |
+| `loading.html`   | Navigation loading state for the route                                                                         |
+| `not-found.html` | 404 UI                                                                                                         |
+| `error.html`     | Error UI                                                                                                       |
 
-`page()` renders the sibling template with `render_page(__file__, context)`. It can also return a
+`page()` returns `html(r"""...""", **context)`. It can also return a
 `(page_html, layout_props)` tuple, whose dict keys become `{{ layout.* }}` in a parent layout.
-
-> **Rule:** `index.py` never inlines page HTML. Markup belongs in `index.html`.
 
 ---
 
@@ -237,7 +228,7 @@ Never handwrite runtime-managed attributes (`pp-component`, `pp-owner`, `pp-ref-
 
 #### The single-root rule
 
-Every route, layout, and component template must have **exactly one** top-level element (or one imported `x-*` root), with any owned `<script>` **inside** that root. Caspian injects `pp-component` on the final root and errors if it cannot find one. `<!-- @import ... -->` comments sit above the root and do not count as content.
+Every route, layout, and component template must have **exactly one** top-level element (or one imported `x-*` root), with any owned `<script>` **inside** that root. Caspian injects `pp-component` on the final root and errors if it cannot find one.
 
 ---
 
@@ -264,7 +255,7 @@ Component `<script>` blocks are plain JavaScript. The `pp` object mirrors React 
 | `pp.optimistic(passthrough, reducer?)`        | Optimistic UI that reconciles against a confirmed value                |
 | `pp.props`                                    | Props bag derived from the rendered root's attributes                  |
 
-Runtime utilities: `pp.createContext`, `pp.mount`, `pp.redirect`, `pp.rpc`, `pp.enablePerf`, `pp.disablePerf`, `pp.getPerfStats`, `pp.resetPerfStats`.
+Runtime utilities: `pp.createContext`, `pp.mount`, `pp.redirect`, `pp.rpc`, `pp.socket`, `pp.enablePerf`, `pp.disablePerf`, `pp.getPerfStats`, `pp.resetPerfStats`.
 
 React APIs with **no** PulsePoint equivalent: `forwardRef`, `memo()` as a wrapper, `lazy`, `Suspense`, `useInsertionEffect`, `useActionState`, `useFormStatus`, free-function `startTransition`.
 
@@ -342,47 +333,27 @@ def UserCard(user=None, **props):
 
 > Use a raw string (`r"""…"""`) when the inline `<script>` contains backslashes (regex, `\n`).
 
-#### Template-backed (`render_html`) — for large markup
-
-`Counter.py`:
-
-```python
-from casp.component_decorator import component, render_html
-
-@component
-def Counter(label: str = "Clicks") -> str:
-    return render_html(__file__, {"label": label})
-```
-
-`Counter.html`:
-
-```html
-<div>
-  <h3>{{ label }}</h3>
-  <button onclick="setCount(count + 1)">{count}</button>
-
-  <script>
-    const [count, setCount] = pp.state(0);
-  </script>
-</div>
-```
-
 #### Importing and rendering
 
-```html
-<!-- @import Container from "../components" -->
-<!-- @import { Button, Card as UserCard } from "../components/ui" -->
-<!-- @import { Breadcrumb, BreadcrumbItem, BreadcrumbLink } from "../components/Breadcrumb.py" -->
+```python
+from casp.component_decorator import html
+from src.components.Container import Container
+from src.components.ui.Button import Button
+from src.components.Breadcrumb import Breadcrumb, BreadcrumbItem, BreadcrumbLink
 
+
+def page():
+    return html(r"""
 <x-container class="py-10">
   <x-button variant="outline">Continue</x-button>
 </x-container>
+""")
 ```
 
 - `Container` → `<x-container />`, `CommandDialog` → `<x-command-dialog />`.
-- If one Python file exports several components, import them **from that file path**, not from the folder.
-- `@import` is a file-level directive: it must sit **above** the authored root, never inside it.
-- For component-to-component composition, prefer real Python imports inside the component module; a component's own `x-*` tags resolve from its module imports.
+- A module's `x-*` tags resolve from the Component objects imported into that module — the Python import **is** the registration.
+- If one Python file exports several components, import them **from that module**, not from per-name modules that do not exist.
+- Slot content resolves in the scope where it was authored, so the module that writes an `x-*` tag must import that component.
 
 #### Props: every prop the template reads must be re-emitted on the root
 
@@ -557,15 +528,59 @@ Every optional capability is gated by one flag in `caspian.config.json`. **That 
 | `typescript`  | TypeScript frontend tooling and the Vite build path                  |
 | `prisma`      | Prisma schema, migrations, and the generated Python ORM              |
 | `mcp`         | A FastMCP server mounted into the same app (`/mcp`)                  |
-| `websocket`   | App-owned FastAPI `@app.websocket(...)` endpoints and socket helpers |
+| `websocket`   | Named sockets — `@socket()` in Python, `pp.socket()` in the browser  |
 
-#### WebSockets
+#### WebSockets — named sockets
 
-Use RPC for ordinary reads, writes, uploads, and SSE streams. Reach for WebSockets only for **long-lived bidirectional** channels: chat, collaboration, presence, multiplayer state.
+Use RPC for ordinary reads, writes, uploads, and SSE streams. Reach for a socket only for **long-lived bidirectional** channels: chat, collaboration, presence, multiplayer state.
 
-Endpoints are app-owned in `main.py`; reusable session/auth/broadcast helpers live in `src/lib/websocket/`. In the browser, use PulsePoint for state and lifecycle but the **native** `WebSocket` for the transport — keep the socket in `pp.ref(...)` and close it in a cleanup effect.
+An rpc is a question with one answer, and an rpc stream is an answer that arrives in pieces. A **named socket** is the third shape — both sides may speak, at any time, for as long as the page is open. It is the socket counterpart of `@rpc()`/`pp.rpc()`: one decorated Python function, one browser call.
 
-**Sockets authorize themselves.** The HTTP middleware stack early-returns on `scope["type"] == "websocket"`, so `AuthMiddleware` does not protect them. Every endpoint must run its own origin + auth guard, and authenticated and guest traffic belong in separate broadcast pools.
+```python
+from src.lib.websocket.sockets import Socket, socket
+
+@socket()
+async def echo(label: str, socket: Socket):
+    while (text := await socket.recv()) is not None:
+        if not await socket.send(f"{label}: {text}"):
+            break  # The browser is gone.
+```
+
+```html
+<script>
+  const sock = pp.ref(null);
+
+  pp.effect(() => {
+    sock.current = pp.socket(
+      "echo",
+      { label: "you" },
+      {
+        onMessage: (value) => append(value),
+        onError: (error) => setStatus(error.message),
+      },
+    );
+    return () => sock.current.close();
+  }, []);
+</script>
+```
+
+Open the socket inside `pp.effect(..., [])`, keep the handle in `pp.ref(...)`, and close it in the effect's cleanup. The handle exposes `send(value)`, `close(code?, reason?)`, and `readyState`; handlers are `onOpen`, `onMessage(value)`, `onError(error)`, `onClose({ code, reason, wasClean })`.
+
+**The wire:**
+
+- Every socket connects to **one endpoint**, wired once in `main.py` and gated by the flag. The function is named in a query parameter, so socket names are **application-wide** — the function's own name, and a duplicate is refused at registration.
+- Arguments do **not** travel in the URL (a URL is logged by every proxy on the way) but as the connection's **first frame**: one JSON object, exactly the payload `pp.rpc` would have posted. The client sends it automatically on open. Keys are filtered against the handler's signature, like RPC.
+- Every frame after that is one JSON value, in either direction.
+- There is no status line inside an open connection, so **failure is a frame**: `{"error": "..."}` — that key alone — followed by a close. The client routes it to `onError`, never `onMessage`, and the server refuses to send that shape as an ordinary message.
+- A handler that returns is a conversation that ends: the connection closes. `await socket.send(...)` returning `False` means the browser is gone — a signal to stop, not an error to report.
+
+**Broadcast:** `socket.sender()` returns a `SocketSender` — the sending half, detached from the conversation and safe to hold in shared state. A room is a `SocketPool` of senders, which prunes connections whose browser has left as it broadcasts. Keep authenticated and guest traffic in **separate pools** so a private broadcast can never fan out to a guest connection.
+
+**Auth is declared per socket, not per endpoint.** `@socket()` is public, `@socket(require_auth=True)` needs a session, `@socket(allowed_roles=[...])` adds RBAC — all delegating to Caspian's `Auth`. This matters because the HTTP middleware stack early-returns on `scope["type"] == "websocket"`: `AuthMiddleware` never sees a handshake, so the socket endpoint authorizes each connection itself, alongside the anti-CSWSH origin check, connection ceiling, message-size limit, per-connection message rate, and idle timeout. The socket session is read-only — mutations are not persisted back to the cookie over a WebSocket.
+
+A hand-written `@app.websocket(...)` route with a native browser `WebSocket` remains the escape hatch for wires the JSON-frame contract cannot carry (binary frames, non-JSON protocols) — and then the app owns every one of those checks itself.
+
+A socket declared in a route's `index.py` registers when that route first renders, which is necessarily before the browser can open it. A socket shared by several routes belongs in `src/lib/**`.
 
 #### MCP
 
@@ -583,8 +598,9 @@ Caspian ships fail-closed defaults. Things worth knowing before you change them:
 - **RPC payload keys are filtered against the function signature.**
 - **`/uploads` serves user content in attachment mode**; only real image types render inline. First-party `/css`, `/js`, and `/assets` stay inline.
 - **CSRF protection, strict Origin validation, HttpOnly cookies, security headers, and page rate limiting** are on by default.
+- **Sockets authorize themselves.** The HTTP middleware stack early-returns on `scope["type"] == "websocket"`, so `AuthMiddleware` never sees a handshake. The named-socket endpoint runs the origin check, connection cap, and per-socket auth itself — HTTP route privacy does not extend to a socket.
 
-Security-relevant environment variables: `MCP_AUTH_TOKEN`, `RATE_LIMIT_PAGES` (default `200/minute`), `CONTENT_SECURITY_POLICY` (replaces the default policy wholesale), `MAX_WEBSOCKET_CONNECTIONS`, `MAX_WEBSOCKET_MESSAGES_PER_WINDOW`, `WEBSOCKET_RATE_WINDOW_SECONDS`, and `WEBSOCKET_ALLOWED_ORIGINS` (**required in production** — the same-origin fallback is derived from the client-supplied `Host` header and is development-only).
+Security-relevant environment variables: `MCP_AUTH_TOKEN`, `RATE_LIMIT_PAGES` (default `200/minute`), `CONTENT_SECURITY_POLICY` (replaces the default policy wholesale), `MAX_WEBSOCKET_CONNECTIONS`, `MAX_WEBSOCKET_MESSAGE_BYTES`, `MAX_WEBSOCKET_MESSAGES_PER_WINDOW`, `WEBSOCKET_RATE_WINDOW_SECONDS`, `WEBSOCKET_IDLE_TIMEOUT_SECONDS`, and `WEBSOCKET_ALLOWED_ORIGINS` (**required in production** — the same-origin fallback is derived from the client-supplied `Host` header and is development-only).
 
 ---
 
@@ -601,21 +617,18 @@ my-app/
 │   └── seed.ts
 ├── src/
 │   ├── app/                     # File-system routes
-│   │   ├── layout.html          # Root layout
-│   │   ├── layout.py
-│   │   ├── index.html           # Home page
-│   │   ├── index.py
+│   │   ├── layout.py            # Root layout (template + props from layout())
+│   │   ├── index.py             # Home page (markup + logic in one file)
 │   │   ├── globals.css
 │   │   ├── error.html
 │   │   ├── not-found.html
 │   │   └── users/[id]/
-│   │       ├── index.html       # /users/:id
-│   │       └── index.py
+│   │       └── index.py         # /users/:id
 │   ├── components/              # Reusable UI (@component)
 │   └── lib/                     # Non-UI code
 │       ├── auth/auth_config.py
 │       ├── prisma/              # Generated Python ORM — do not edit
-│       ├── websocket/           # Socket helpers (when websocket: true)
+│       ├── websocket/           # Named sockets: @socket(), Socket, SocketPool
 │       └── mcp/                 # FastMCP server (when mcp: true)
 ├── public/                      # Static assets, incl. the PulsePoint runtime and uploads
 └── settings/                    # Dev stack config and generated indexes
@@ -625,7 +638,7 @@ my-app/
 
 - **Route-owned** logic (first-render query, route `@rpc()` actions, redirects, route validation) stays in that route's `index.py`. Move it to `src/lib/**` only when it is genuinely shared.
 - **Reusable UI** goes in `src/components/`; **helpers, services, adapters** go in `src/lib/`.
-- **Compose pages from components.** A route's `index.html` should read as a short assembly of `x-*` chunks (topbar, sidebar, header, sections, forms, footer), not a wall of markup. Plan the breakdown before writing the route.
+- **Compose pages from components.** A route's page template should read as a short assembly of `x-*` chunks (topbar, sidebar, header, sections, forms, footer), not a wall of markup. Plan the breakdown before writing the route.
 - **Generated, never hand-edited:** `src/lib/prisma/**`, `settings/prisma-schema.json`, `settings/files-list.json`, `settings/component-map.json`, `public/css/styles.css`, `__pycache__/`.
 
 ---
@@ -697,8 +710,11 @@ Policy is **warn & skip**: dynamic routes are pre-rendered only when their `inde
 npx ppicons add Rocket
 ```
 
+```python
+from src.lib.ppicons.Rocket import Rocket
+```
+
 ```html
-<!-- @import { Rocket, ChevronDown } from "../lib/ppicons" -->
 <x-rocket class="w-6 h-6 text-primary" />
 ```
 
@@ -708,8 +724,11 @@ npx ppicons add Rocket
 npx maddex add button card dialog
 ```
 
+```python
+from src.lib.maddex.Button import Button
+```
+
 ```html
-<!-- @import { Button } from "../lib/maddex/Button.py" -->
 <x-button variant="outline">Continue</x-button>
 ```
 

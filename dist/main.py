@@ -1,5 +1,6 @@
 from casp.components_compiler import transform_components
 from casp.html_native import (
+    _ESCAPED_BRACE_PLACEHOLDER_RE,
     mask_escaped_brace_entities,
     parse_fragment,
     restore_escaped_brace_entities,
@@ -9,6 +10,7 @@ import asyncio
 import inspect
 import os
 import importlib.util
+import re
 import secrets
 import traceback
 import json
@@ -20,8 +22,6 @@ from fastapi import (
     Request,
     Response,
     WebSocket,
-    WebSocketDisconnect,
-    status,
 )
 from fastapi.responses import (
     RedirectResponse,
@@ -49,8 +49,7 @@ from casp.rpc import register_rpc_routes, rpc_limiter
 from casp.layout import (
     render_with_nested_layouts,
     compile_template,
-    load_template_file,
-    render_page,
+    _finalize_page_region,
     _runtime_injections,
     _runtime_metadata,
 )
@@ -743,180 +742,25 @@ class RequestDiagnosticsMiddleware:
 # ====
 # WebSocket Routes (optional - gated by caspian.config.json `websocket`)
 # ====
-WEBSOCKET_PATH = "/ws/live"
-PUBLIC_WEBSOCKET_PATH = "/ws/public"
-WEBSOCKET_IDLE_TIMEOUT_SECONDS = max(
-    10,
-    int(os.getenv('WEBSOCKET_IDLE_TIMEOUT_SECONDS', 120)),
-)
-MAX_WEBSOCKET_MESSAGE_BYTES = max(
-    256,
-    int(os.getenv('MAX_WEBSOCKET_MESSAGE_BYTES', 4096)),
-)
-# Messages one connection may send per rolling window. Each accepted message
-# fans out to every socket in the pool, so an unthrottled client turns a single
-# cheap connection into a broadcast flood against everyone else.
-MAX_WEBSOCKET_MESSAGES_PER_WINDOW = max(
-    1,
-    int(os.getenv('MAX_WEBSOCKET_MESSAGES_PER_WINDOW', 20)),
-)
-WEBSOCKET_RATE_WINDOW_SECONDS = max(
-    1,
-    int(os.getenv('WEBSOCKET_RATE_WINDOW_SECONDS', 10)),
-)
-
-
-class WebSocketMessageRate:
-    """Sliding-window send budget for a single connection.
-
-    Kept per-socket rather than per-IP: the pool is the shared resource being
-    protected, and one abusive connection should not be able to spend another
-    client's budget.
-    """
-
-    def __init__(self, limit: int, window_seconds: int):
-        self._limit = limit
-        self._window_seconds = window_seconds
-        self._timestamps: list[float] = []
-
-    def allow(self) -> bool:
-        now = time.monotonic()
-        cutoff = now - self._window_seconds
-        self._timestamps = [t for t in self._timestamps if t > cutoff]
-
-        if len(self._timestamps) >= self._limit:
-            return False
-
-        self._timestamps.append(now)
-        return True
-
-
-async def _run_websocket_channel(
-    websocket: WebSocket,
-    manager: Any,
-    payload: dict[str, Any] | None,
-    ready_message: str,
-):
-    if not await manager.connect(websocket):
-        # Pool at capacity; `connect` already closed with 1013 (try again later).
-        return
-
-    message_rate = WebSocketMessageRate(
-        MAX_WEBSOCKET_MESSAGES_PER_WINDOW,
-        WEBSOCKET_RATE_WINDOW_SECONDS,
-    )
-    ready_payload: dict[str, Any] = {
-        "type": "ready",
-        "message": ready_message,
-    }
-    if payload is not None:
-        ready_payload["payload"] = payload
-    await websocket.send_json(ready_payload)
-
-    try:
-        while True:
-            try:
-                raw_message = await asyncio.wait_for(
-                    websocket.receive_text(),
-                    timeout=WEBSOCKET_IDLE_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
-                return
-
-            if len(raw_message.encode("utf-8")) > MAX_WEBSOCKET_MESSAGE_BYTES:
-                await websocket.close(code=status.WS_1009_MESSAGE_TOO_BIG)
-                return
-
-            # Checked before parsing so a flood costs nothing but the read.
-            if not message_rate.allow():
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "Too many messages. Slow down.",
-                })
-                continue
-
-            try:
-                message = json.loads(raw_message)
-            except json.JSONDecodeError:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "Messages must be valid JSON.",
-                })
-                continue
-
-            if not isinstance(message, dict):
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "Messages must be JSON objects.",
-                })
-                continue
-
-            message_type = str(message.get("type", "message"))
-            if message_type == "ping":
-                await websocket.send_json({"type": "pong", "time": int(time.time())})
-                continue
-
-            text = str(message.get("text", "")).strip()
-            if not text:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "Message text is required.",
-                })
-                continue
-
-            outgoing_payload: dict[str, Any] = {
-                "type": "message",
-                "text": text[:1000],
-                "time": int(time.time()),
-            }
-            if payload is not None:
-                outgoing_payload["payload"] = payload
-            await manager.broadcast_json(outgoing_payload)
-    except WebSocketDisconnect:
-        return
-    finally:
-        manager.disconnect(websocket)
-
 
 if cfg.websocket:
     # Optional, feature-gated module: only generated when websocket is enabled
     # in caspian.config.json, so suppress the static "module not found" check.
-    from src.lib.websocket.websocket_security import (  # type: ignore[import-not-found]
-        authorize_websocket,
-        public_websocket_connections,
-        websocket_connections,
+    from src.lib.websocket.sockets import (  # type: ignore[import-not-found]
+        SOCKET_PATH,
+        serve_named_socket,
     )
 
-    # Both endpoints share ONE guard (`authorize_websocket`) that delegates to
-    # Caspian's `Auth`, and ONE transport loop (`_run_websocket_channel`). They
-    # differ only by auth policy and broadcast pool. To role-gate a channel,
-    # pass `roles=[...]`; to add another channel, add an endpoint that calls the
-    # same guard.
-
-    @app.websocket(WEBSOCKET_PATH)
-    async def websocket_live_endpoint(websocket: WebSocket):
-        if await authorize_websocket(websocket, require_auth=True) is None:
-            return
-
-        await _run_websocket_channel(
-            websocket,
-            websocket_connections,
-            None,
-            "Private WebSocket connected.",
-        )
-
-    @app.websocket(PUBLIC_WEBSOCKET_PATH)
-    async def websocket_public_endpoint(websocket: WebSocket):
-        if await authorize_websocket(websocket, require_auth=False) is None:
-            return
-
-        await _run_websocket_channel(
-            websocket,
-            public_websocket_connections,
-            {"guest": True, "scope": "public"},
-            "Public WebSocket connected.",
-        )
+    # Named sockets: the server half of `pp.socket(...)`. One endpoint for
+    # every `@socket()` function; the function is named in the `name` query
+    # parameter and the arguments arrive as the connection's first frame.
+    # Auth policy is per socket -- `@socket(require_auth=True, allowed_roles=
+    # [...])` -- so there are no separate public/private channel endpoints.
+    # Origin check, auth delegation, and connection/message limits live in
+    # `serve_named_socket` so this stays a pure wiring point.
+    @app.websocket(SOCKET_PATH)
+    async def websocket_named_socket_endpoint(websocket: WebSocket):
+        await serve_named_socket(websocket)
 
 # ====
 # Route Registration
@@ -944,7 +788,6 @@ def load_route_module(file_path: str):
     assert spec is not None and spec.loader is not None, f"Cannot load spec for {file_path}"
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    setattr(module, 'render_page', render_page)
     _route_module_cache[abs_path] = (mtime_ns, module)
     _route_signature_cache.pop(abs_path, None)
     return module
@@ -1057,8 +900,7 @@ def register_routes():
     idx = get_files_index()
     for route in idx.routes:
         base_path = f"src/app/{route.fs_dir}" if route.fs_dir else "src/app"
-        file_name = "index.py" if route.has_py else "index.html"
-        full_path = f"{base_path}/{file_name}".replace('//', '/')
+        full_path = f"{base_path}/index.py".replace('//', '/')
         register_single_route(route.fastapi_rule, full_path)
 
 
@@ -1087,77 +929,74 @@ def register_single_route(url_pattern: str, file_path: str):
 
         page_content_source = file_path
 
-        if file_path.endswith('.py'):
-            module = load_route_module(file_path)
-            if not hasattr(module, 'page'):
-                raise AttributeError(f"Missing 'def page():' in {file_path}")
+        module = load_route_module(file_path)
+        if not hasattr(module, 'page'):
+            raise AttributeError(f"Missing 'def page():' in {file_path}")
 
-            sig = get_page_signature(file_path, module.page)
-            call_kwargs = {}
-            call_args = []
+        sig = get_page_signature(file_path, module.page)
+        call_kwargs = {}
+        call_args = []
 
-            if kwargs:
-                call_args.append(kwargs)
-            if 'request' in sig.parameters:
-                call_kwargs['request'] = request
+        if kwargs:
+            call_args.append(kwargs)
+        if 'request' in sig.parameters:
+            call_kwargs['request'] = request
 
-            for name, param in sig.parameters.items():
-                if name in call_kwargs:
-                    continue
-                if name in ("kwargs",):
-                    continue
-                if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-                    continue
-                if name in request.query_params:
-                    call_kwargs[name] = _coerce_query_param(
-                        request, name, param)
+        for name, param in sig.parameters.items():
+            if name in call_kwargs:
+                continue
+            if name in ("kwargs",):
+                continue
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
+            if name in request.query_params:
+                call_kwargs[name] = _coerce_query_param(
+                    request, name, param)
 
-            if inspect.iscoroutinefunction(module.page):
-                result = await module.page(*call_args, **call_kwargs)
-            else:
-                result = module.page(*call_args, **call_kwargs)
-
-            if isinstance(result, Response):
-                return result
-
-            if inspect.isasyncgen(result) or inspect.isgenerator(result):
-                return SSE(cast("AsyncGenerator | Generator", result))
-
-            cache_settings = getattr(module, 'cache_settings', None)
-            if cache_settings:
-                req_should_cache = cache_settings.enabled
-                req_cache_ttl = cache_settings.ttl
-
-            if isinstance(result, tuple):
-                page_content = result[0]
-                content = str(page_content)
-                page_content_source = getattr(
-                    page_content, 'source_path', file_path)
-                if len(result) >= 2 and isinstance(result[1], dict):
-                    page_layout_props = result[1]
-            else:
-                content = str(result)
-                page_content_source = getattr(result, 'source_path', file_path)
-
-            dynamic_meta = _runtime_metadata.get()
-            static_meta = getattr(module, 'metadata', None)
-
-            def extract_meta(obj):
-                d = {}
-                if not obj:
-                    return d
-                if obj.title:
-                    d['title'] = obj.title
-                if obj.description:
-                    d['description'] = obj.description
-                if obj.extra:
-                    d.update(obj.extra)
-                return d
-
-            page_metadata.update(extract_meta(static_meta))
-            page_metadata.update(extract_meta(dynamic_meta))
+        if inspect.iscoroutinefunction(module.page):
+            result = await module.page(*call_args, **call_kwargs)
         else:
-            content = load_template_file(file_path)
+            result = module.page(*call_args, **call_kwargs)
+
+        if isinstance(result, Response):
+            return result
+
+        if inspect.isasyncgen(result) or inspect.isgenerator(result):
+            return SSE(cast("AsyncGenerator | Generator", result))
+
+        cache_settings = getattr(module, 'cache_settings', None)
+        if cache_settings:
+            req_should_cache = cache_settings.enabled
+            req_cache_ttl = cache_settings.ttl
+
+        if isinstance(result, tuple):
+            page_content = result[0]
+            content = str(page_content)
+            page_content_source = getattr(
+                page_content, 'source_path', file_path)
+            if len(result) >= 2 and isinstance(result[1], dict):
+                page_layout_props = result[1]
+        else:
+            content = str(result)
+            page_content_source = getattr(result, 'source_path', file_path)
+
+        dynamic_meta = _runtime_metadata.get()
+        static_meta = getattr(module, 'metadata', None)
+
+        def extract_meta(obj):
+            d = {}
+            if not obj:
+                return d
+            if obj.title:
+                d['title'] = obj.title
+            if obj.description:
+                d['description'] = obj.description
+            if obj.extra:
+                d.update(obj.extra)
+            return d
+
+        page_metadata.update(extract_meta(static_meta))
+        page_metadata.update(extract_meta(dynamic_meta))
 
         full_context = {**kwargs, "request": request, **page_layout_props}
 
@@ -1198,17 +1037,16 @@ def register_single_route(url_pattern: str, file_path: str):
         '.', '_').replace('[', '').replace(']', '').replace('(', '').replace(')', '')
 
     route_methods = ['GET', 'POST']
-    if file_path.endswith('.py'):
-        module = load_route_module(file_path)
-        declared_route_methods = getattr(module, 'route_methods', None)
-        if isinstance(declared_route_methods, (list, tuple)) and declared_route_methods:
-            normalized_methods = [
-                str(method).strip().upper()
-                for method in declared_route_methods
-                if str(method).strip()
-            ]
-            if normalized_methods:
-                route_methods = list(dict.fromkeys(normalized_methods))
+    module = load_route_module(file_path)
+    declared_route_methods = getattr(module, 'route_methods', None)
+    if isinstance(declared_route_methods, (list, tuple)) and declared_route_methods:
+        normalized_methods = [
+            str(method).strip().upper()
+            for method in declared_route_methods
+            if str(method).strip()
+        ]
+        if normalized_methods:
+            route_methods = list(dict.fromkeys(normalized_methods))
 
     app.add_api_route(url_pattern, make_handler,
                       methods=route_methods, name=endpoint)
@@ -1234,9 +1072,184 @@ def defer_component_roots(html_output: str) -> str:
     if 'pp-component' not in html_output:
         return html_output
 
+    # Fast path: the render pipeline recorded the page subtree's exact
+    # serialized bytes. That string is finished bs4-serializer output -- fully
+    # normalized, so re-parsing it is pure cost -- and it is usually almost the
+    # entire document. Mask it behind a token, run the (now tiny) parse over
+    # the layout shell, and apply the same wrap/entity-protection transforms to
+    # the region string-level. Every mismatch falls back to the full parse.
+    if not _DEFER_FAST_DISABLED:
+        region = _finalize_page_region.get()
+        if (
+            region
+            and len(region) >= _DEFER_REGION_MIN_BYTES
+            and html_output.count(region) == 1
+        ):
+            deferred = _defer_with_verbatim_region(html_output, region)
+            if deferred is not None:
+                return deferred
+
     masked_html, placeholders = mask_escaped_brace_entities(html_output)
     soup = parse_fragment(masked_html)
     return _defer_component_roots_in_soup(soup, placeholders, html_output)
+
+
+_DEFER_FAST_DISABLED = os.getenv(
+    'CASP_DEFER_FAST', '').strip().lower() in {'0', 'off', 'false', 'no'}
+# Below this, masking the region saves less than the two extra scans it costs.
+_DEFER_REGION_MIN_BYTES = 4096
+
+
+def _protect_region_brace_entities(value: str) -> str:
+    """String-level equivalent of the in-tree brace-entity protection.
+
+    Inside a deferred ``<template>``, each literal brace entity must gain one
+    extra encoding layer (``&#123;`` -> ``&amp;#123;``) so the browser's parse
+    of the response consumes the outer layer and PulsePoint still sees the
+    entity. The tree path achieves this by restoring masked entities into the
+    parsed template and letting the serializer escape the ``&``; on a verbatim
+    region the same result is a direct substitution.
+    """
+    from casp.html_native import _ESCAPED_BRACE_ENTITY_RE
+
+    return _ESCAPED_BRACE_ENTITY_RE.sub(
+        lambda match: '&amp;' + match.group(0)[1:], value)
+
+
+def _defer_with_verbatim_region(html_output: str, region: str) -> Optional[str]:
+    """Defer pass with the page subtree masked as an opaque token.
+
+    Returns ``None`` whenever the document does not match the shape this fast
+    path understands, in which case the caller re-runs the full-parse pass.
+    """
+    from casp.html_native import _PLACEHOLDER_COUNTER
+
+    # The region's own root boundary key, when its first tag carries one. The
+    # region is serializer output, so '>' cannot appear inside an attribute
+    # value and the first '>' reliably ends the opening tag. Edge whitespace is
+    # common (a template authored as a triple-quoted string), so probe the
+    # stripped core.
+    region_root_key = None
+    region_core = region.strip()
+    open_tag_end = region_core.find('>')
+    if region_core.startswith('<') and open_tag_end > 0:
+        key_match = re.search(
+            r'\spp-component="([^"]+)"', region_core[:open_tag_end + 1])
+        if key_match:
+            region_root_key = key_match.group(1)
+
+    token = f"__PP_DEFER_REGION_{next(_PLACEHOLDER_COUNTER)}__"
+    masked_doc = html_output.replace(region, token, 1)
+
+    masked_html, placeholders = mask_escaped_brace_entities(masked_doc)
+    soup = parse_fragment(masked_html)
+    body = soup.body
+    if body is None:
+        return None
+
+    token_node = None
+    for node in body.descendants:
+        if isinstance(node, NavigableString) and token in node:
+            token_node = node
+            break
+    if token_node is None:
+        # The region did not land in the body (or the parse split the token);
+        # nothing this path can reason about.
+        return None
+
+    # Inside ANY boundary ancestor means the region ends up inside a deferred
+    # template (the outermost one gets wrapped below, or already is one), so
+    # its entities need the protection layer but no wrapper of its own.
+    region_enclosed = any(
+        isinstance(parent, Tag) and parent.has_attr('pp-component')
+        for parent in token_node.parents
+    )
+
+    if not region_enclosed and region_root_key is None and 'pp-component' in region:
+        # Boundaries live inside the region but its root is not one: they
+        # would need wrapping at arbitrary depth, which only the tree pass can
+        # locate.
+        return None
+
+    roots = []
+    stack = [
+        child for child in reversed(body.contents) if isinstance(child, Tag)
+    ]
+    while stack:
+        el = stack.pop()
+        if el.has_attr('pp-component'):
+            if el.name != 'template':
+                roots.append(el)
+            continue
+        stack.extend(
+            child for child in reversed(el.contents) if isinstance(child, Tag)
+        )
+
+    for root in roots:
+        key = root.get('pp-component')
+        if key is None:
+            continue
+        template = soup.new_tag('template')
+        template['pp-component'] = key
+        root.insert_before(template)
+        template.append(root.extract())
+
+    if placeholders:
+        def protect_brace_entities(value: str) -> str:
+            return _ESCAPED_BRACE_PLACEHOLDER_RE.sub(
+                lambda match: placeholders.get(match.group(0), match.group(0)),
+                value,
+            )
+
+        for template in body.select('template[pp-component]'):
+            for node in list(template.descendants):
+                if isinstance(node, NavigableString):
+                    original = str(node)
+                    if '__PP_ESCAPED_BRACE_' not in original:
+                        continue
+                    content = protect_brace_entities(original)
+                    if content != original:
+                        node.replace_with(content)
+                elif isinstance(node, Tag):
+                    for name, value in node.attrs.items():
+                        if isinstance(value, str):
+                            if '__PP_ESCAPED_BRACE_' in value:
+                                node.attrs[name] = protect_brace_entities(
+                                    value)
+                        elif isinstance(value, list):
+                            for index, item in enumerate(value):
+                                item = str(item)
+                                if '__PP_ESCAPED_BRACE_' in item:
+                                    item = protect_brace_entities(item)
+                                value[index] = item
+
+    serialized = restore_escaped_brace_entities(
+        serialize_fragment(soup), placeholders)
+    if token not in serialized:
+        return None
+
+    if region_enclosed:
+        region_out = _protect_region_brace_entities(region)
+    elif region_root_key is not None:
+        # The tree path wraps only the root ELEMENT; whitespace at the region's
+        # edges stays outside the template. Mirror that here. An edge comment
+        # would be ambiguous to split off string-level, so leave that shape to
+        # the full parse.
+        core = region_core
+        if not core.startswith('<') or core[1] in ('!', '?') or core.endswith('-->'):
+            return None
+        prefix_len = region.find('<')
+        prefix = region[:prefix_len]
+        suffix = region[prefix_len + len(core):]
+        region_out = (
+            f'{prefix}<template pp-component="{region_root_key}">'
+            f'{_protect_region_brace_entities(core)}'
+            f'</template>{suffix}'
+        )
+    else:
+        region_out = region
+
+    return serialized.replace(token, region_out, 1)
 
 
 def _defer_component_roots_in_soup(
@@ -1256,13 +1269,27 @@ def _defer_component_roots_in_soup(
     if body is None:
         return unchanged()
 
-    roots = [
-        el for el in body.select('[pp-component]')
-        if el.name != 'template'
-        and not any(
-            parent.has_attr('pp-component') for parent in el.parents
-        )
+    # Outermost boundaries only, found in one pruned walk. The previous
+    # ``body.select('[pp-component]')`` matched every nested boundary and then
+    # walked each match's full ancestor chain to discard it -- O(depth) per
+    # boundary on documents whose boundary count is the whole point of the
+    # page. Stopping the descent at the first boundary visits each outermost
+    # subtree root exactly once and never enumerates the nested ones. An
+    # element already inside a ``<template pp-component>`` stays untouched,
+    # matching the ancestor-check semantics.
+    roots = []
+    stack = [
+        child for child in reversed(body.contents) if isinstance(child, Tag)
     ]
+    while stack:
+        el = stack.pop()
+        if el.has_attr('pp-component'):
+            if el.name != 'template':
+                roots.append(el)
+            continue
+        stack.extend(
+            child for child in reversed(el.contents) if isinstance(child, Tag)
+        )
     if not roots:
         return unchanged()
 
@@ -1286,26 +1313,36 @@ def _defer_component_roots_in_soup(
     # Placeholders outside deferred component templates are restored normally
     # after serialization.
     if placeholders:
+        # One compiled-regex pass per string instead of one full ``replace``
+        # scan per placeholder, and nodes that carry no token (the vast
+        # majority) are skipped by a C-level substring probe.
         def protect_brace_entities(value: str) -> str:
-            protected = value
-            for placeholder, entity in placeholders.items():
-                protected = protected.replace(placeholder, entity)
-            return protected
+            return _ESCAPED_BRACE_PLACEHOLDER_RE.sub(
+                lambda match: placeholders.get(match.group(0), match.group(0)),
+                value,
+            )
 
         for template in body.select('template[pp-component]'):
             for node in list(template.descendants):
                 if isinstance(node, NavigableString):
                     original = str(node)
+                    if '__PP_ESCAPED_BRACE_' not in original:
+                        continue
                     content = protect_brace_entities(original)
                     if content != original:
                         node.replace_with(content)
                 elif isinstance(node, Tag):
                     for name, value in node.attrs.items():
                         if isinstance(value, str):
-                            node.attrs[name] = protect_brace_entities(value)
+                            if '__PP_ESCAPED_BRACE_' in value:
+                                node.attrs[name] = protect_brace_entities(
+                                    value)
                         elif isinstance(value, list):
                             for index, item in enumerate(value):
-                                value[index] = protect_brace_entities(str(item))
+                                item = str(item)
+                                if '__PP_ESCAPED_BRACE_' in item:
+                                    item = protect_brace_entities(item)
+                                value[index] = item
 
     return restore_escaped_brace_entities(serialize_fragment(soup), placeholders)
 
