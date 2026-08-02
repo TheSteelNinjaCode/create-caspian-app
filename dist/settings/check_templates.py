@@ -143,6 +143,11 @@ SCRIPT_BLOCK = re.compile(r"<script\b.*?</script\s*>", re.IGNORECASE | re.DOTALL
 PRE_BLOCK = re.compile(r"<(pre|code)\b.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 
+# Components are imported with Python imports; an `@import` HTML comment does
+# not import anything and the compiler refuses it. Matched BEFORE comments are
+# blanked out — the construct *is* a comment.
+IMPORT_COMMENT = re.compile(r"<!--\s*@import\b")
+
 # In a single-file component the markup lives in a triple-quoted string handed to
 # `html(...)`. Surrounding Python must not be matched: `onValueChange=...` is an
 # ordinary keyword argument, and flagging it as a camelCase event prop would make
@@ -172,14 +177,19 @@ def _keep_only(text: str, pattern: re.Pattern[str]) -> str:
     return "".join(kept)
 
 
-def _markup_only(text: str, *, is_python: bool) -> str:
-    """Reduce a source file to just the markup a template rule may match."""
+def _markup_regions(text: str, *, is_python: bool) -> tuple[str, str]:
+    """Reduce a source file to just the markup a template rule may match.
+
+    Returns ``(markup, markup_with_comments)``: the first has HTML comments
+    blanked for the JSX/directive rules; the second keeps them so the
+    ``@import``-comment rule can still see its target.
+    """
     if is_python:
         # Only triple-quoted regions can hold markup in a single-file component.
         text = _keep_only(text, TRIPLE_QUOTED)
-    for pattern in (SCRIPT_BLOCK, PRE_BLOCK, HTML_COMMENT):
+    for pattern in (SCRIPT_BLOCK, PRE_BLOCK):
         text = _blank_out(text, pattern)
-    return text
+    return _blank_out(text, HTML_COMMENT), text
 
 
 def _position(text: str, offset: int) -> tuple[int, int]:
@@ -190,8 +200,23 @@ def _position(text: str, offset: int) -> tuple[int, int]:
 
 def lint_text(text: str, rel_path: str, *, is_python: bool = False) -> list[TemplateIssue]:
     """Return every template issue found in one file's contents."""
-    markup = _markup_only(text, is_python=is_python)
+    markup, markup_with_comments = _markup_regions(text, is_python=is_python)
     issues: list[TemplateIssue] = []
+
+    for match in IMPORT_COMMENT.finditer(markup_with_comments):
+        line, column = _position(markup_with_comments, match.start())
+        issues.append(
+            TemplateIssue(
+                rel_path,
+                line,
+                column,
+                "import-comment",
+                "An '@import' HTML comment does not import a component. Import "
+                "it in the owning Python module "
+                "(from src.lib.maddex.Button import Button) and keep the "
+                "<x-button> tag in the markup.",
+            )
+        )
 
     for rule in RULES:
         for match in rule.pattern.finditer(markup):

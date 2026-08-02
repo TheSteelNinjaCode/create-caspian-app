@@ -76,8 +76,6 @@ async def _resolve_static_paths(route) -> list | None:
       - a list of scalars: [1, 2]  (mapped onto the route's single param)
       - a callable (sync or async) returning either of the above
     """
-    if not route.has_py:
-        return None
     module = main.load_route_module(_route_py_path(route))
     provider = getattr(module, "static_paths", None)
     if provider is None:

@@ -2,7 +2,7 @@
 
 A single-file component imports its children (`from .Dialog import
 DialogContent`) and then uses them **only** as `<x-dialog-content>` tags inside
-an `html(...)` / `render_html(...)` template string. Ruff parses Python, not the
+an `html(...)` template string. Ruff parses Python, not the
 template, so it reports every such import as unused (F401). Those imports are
 load-bearing: casp resolves the tag from the module's globals at render time
 (`component_decorator._attach_caller_scope`).
