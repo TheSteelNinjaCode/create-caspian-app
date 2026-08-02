@@ -231,7 +231,7 @@ This is the top architectural requirement for this workspace. Treat it as a hard
 
 - These files are the packaged Caspian documentation layer, not the runtime and not the source of current workspace state.
 - Use them to help AI answer three questions: which Caspian feature applies, which project files should be inspected next, and which workflow is appropriate once the feature is confirmed as enabled.
-- Use `node_modules/caspian-utils/dist/docs/file-conventions.md` when deciding what belongs in `index.py`, `layout.py`, `loading.html`, `not-found.html`, or `error.html`.
+- Use `node_modules/caspian-utils/dist/docs/file-conventions.md` for the general special-file model, then verify the completed Python migration in `main.py` and `.venv/Lib/site-packages/casp/**`: navigation loading UI uses `loading.py`, and global fallback pages use `not_found.py` and `error.py`. This app has no authored `.html` special files.
 - Use `node_modules/caspian-utils/dist/docs/websockets.md` when deciding how to document or implement app-owned FastAPI WebSockets, browser `WebSocket` clients, origin checks, auth/session checks, message contracts, and the choice between WebSockets, RPC, and SSE.
 - Verify behavior claims in this order:
   1.  `caspian.config.json`, then `main.py`, `src/lib/**`, `public/js/**`, `prisma/**`, `src/app/**`

@@ -1,4 +1,17 @@
-<div class="bg-gray-50 flex h-screen items-center justify-center px-4">
+from casp.component_decorator import html
+from casp.layout import Metadata
+
+
+metadata = Metadata(
+    title="Page Not Found",
+    description="The page you are looking for does not exist.",
+    extra={"robots": "noindex, nofollow"},
+)
+
+
+def page():
+    return html(r"""
+<main class="flex min-h-screen items-center justify-center bg-gray-50 px-4">
   <div class="text-center">
     <h1 class="text-9xl font-black text-gray-200">404</h1>
 
@@ -15,4 +28,5 @@
       Go Back Home
     </a>
   </div>
-</div>
+</main>
+""")

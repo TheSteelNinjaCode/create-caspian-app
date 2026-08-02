@@ -171,9 +171,9 @@ src/app/dashboard/layout.py        ->  wraps every /dashboard/* page
 | ---------------- | ------------------------------------------------------------------------------------------------------------- |
 | `index.py`       | The page: `page()` returning `html(...)` markup, `metadata`, route-owned `@rpc()` actions, redirects, first-render data |
 | `layout.py`      | The section wrapper: `layout()` returning the shell template (with `<slot />`) plus optional props and server logic |
-| `loading.html`   | Navigation loading state for the route                                                                         |
-| `not-found.html` | 404 UI                                                                                                         |
-| `error.html`     | Error UI                                                                                                       |
+| `loading.py`     | Route-scoped navigation loader: synchronous `loading()` returning `html(...)` markup                          |
+| `not_found.py`   | Global 404 page: `page()` returning `html(...)` markup and metadata                                           |
+| `error.py`       | Global 500 page: `page()` receiving safe error context and returning `html(...)` markup                       |
 
 `page()` returns `html(r"""...""", **context)`. It can also return a
 `(page_html, layout_props)` tuple, whose dict keys become `{{ layout.* }}` in a parent layout.
@@ -620,8 +620,9 @@ my-app/
 │   │   ├── layout.py            # Root layout (template + props from layout())
 │   │   ├── index.py             # Home page (markup + logic in one file)
 │   │   ├── globals.css
-│   │   ├── error.html
-│   │   ├── not-found.html
+│   │   ├── error.py             # Global 500 page
+│   │   ├── not_found.py         # Global 404 page
+│   │   ├── dashboard/loading.py # /dashboard navigation loading UI
 │   │   └── users/[id]/
 │   │       └── index.py         # /users/:id
 │   ├── components/              # Reusable UI (@component)

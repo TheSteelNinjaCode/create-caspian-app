@@ -1,3 +1,8 @@
+from casp.component_decorator import html
+
+
+def page():
+    return html(r"""
 <div
   class="min-h-screen bg-background text-foreground selection:bg-primary/30 flex flex-col items-center justify-between py-8 md:py-12 px-6 md:px-24 overflow-x-hidden relative"
 >
@@ -157,3 +162,4 @@
     </a>
   </div>
 </div>
+""")
