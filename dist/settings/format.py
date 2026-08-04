@@ -49,7 +49,6 @@ from __future__ import annotations
 import argparse
 import ast
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -270,22 +269,6 @@ def find_blocks(path: Path) -> list[Block]:
 # ---------------------------------------------------------------------------
 # djLint
 # ---------------------------------------------------------------------------
-
-
-def _djlint_available() -> bool:
-    return shutil.which("djlint") is not None or _djlint_module()
-
-
-def _djlint_module() -> bool:
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "djlint", "--version"],
-            capture_output=True,
-            timeout=60,
-        )
-        return True
-    except OSError, subprocess.SubprocessError:
-        return False
 
 
 def djlint_batch(sources: list[str]) -> list[str | None]:
