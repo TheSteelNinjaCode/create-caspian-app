@@ -122,3 +122,45 @@ class TestDeferComponentRoots:
         out = main.finalize_html(html)
         assert "<script>console.log(1)</script>" in out
         assert "<template" in out
+
+
+class TestDevConsoleBridge:
+    """The dev log bridge must be dev-only by code, not by convention.
+
+    `CASPIAN_BROWSER_SYNC_PORT` is normally set only by settings/python-server.ts,
+    which is why the tag does not reach production in practice. That is a fact
+    about who sets the variable, not an enforcement -- so a stray value in a
+    production environment used to inject `<script src="/__pp-devlog.js">` into
+    every page, where BrowserSync is not running to serve it.
+    """
+
+    PAGE = "<html><head><title>t</title></head><body>x</body></html>"
+
+    def test_injects_in_development_when_port_is_set(self, monkeypatch):
+        monkeypatch.setattr(main, "IS_PRODUCTION", False)
+        monkeypatch.setenv("CASPIAN_BROWSER_SYNC_PORT", "5090")
+
+        assert "__pp-devlog.js" in main._inject_dev_console_bridge(self.PAGE)
+
+    def test_never_injects_in_production(self, monkeypatch):
+        """The guard under test: set variable, production, must stay out."""
+        monkeypatch.setattr(main, "IS_PRODUCTION", True)
+        monkeypatch.setenv("CASPIAN_BROWSER_SYNC_PORT", "5090")
+
+        assert main._inject_dev_console_bridge(self.PAGE) == self.PAGE
+
+    def test_skips_when_port_is_unset(self, monkeypatch):
+        monkeypatch.setattr(main, "IS_PRODUCTION", False)
+        monkeypatch.delenv("CASPIAN_BROWSER_SYNC_PORT", raising=False)
+
+        assert main._inject_dev_console_bridge(self.PAGE) == self.PAGE
+
+    def test_does_not_double_inject(self, monkeypatch):
+        monkeypatch.setattr(main, "IS_PRODUCTION", False)
+        monkeypatch.setenv("CASPIAN_BROWSER_SYNC_PORT", "5090")
+
+        once = main._inject_dev_console_bridge(self.PAGE)
+        twice = main._inject_dev_console_bridge(once)
+
+        assert twice == once
+        assert twice.count("__pp-devlog.js") == 1

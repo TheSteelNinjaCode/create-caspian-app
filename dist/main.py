@@ -58,6 +58,7 @@ from typing import Any, AsyncGenerator, Generator, Optional, cast, get_args, get
 from urllib.parse import urlparse
 from bs4.element import NavigableString, Tag
 from src.lib.auth.auth_config import build_auth_settings
+from casp.app_time import get_app_timezone
 from casp.runtime_security import (
     INLINE_SAFE_UPLOAD_MEDIA_TYPES,
     build_security_headers,
@@ -81,6 +82,11 @@ cfg = get_config()
 # unauthenticated endpoint or an open CORS policy is tolerable. Resolved
 # fail-closed: only an explicit development APP_ENV turns the relaxations on.
 IS_PRODUCTION = is_production_environment()
+
+# Resolve APP_TIMEZONE once at import so an unknown zone name fails at boot with
+# a named error, rather than on whichever request first formats a date. Only the
+# calendar is affected -- session expiry and cache TTLs stay on UTC by design.
+APP_TIMEZONE = get_app_timezone()
 
 # ====
 # CORS configuration (shared .env convention, mirrors casp.rpc origin checks)
@@ -1341,9 +1347,12 @@ def _defer_component_roots_in_soup(
     return restore_escaped_brace_entities(serialize_fragment(soup), placeholders)
 
 
-# Dev-only: the browser console bridge. `CASPIAN_BROWSER_SYNC_PORT` is set only
-# by settings/python-server.ts when the dev stack spawns this process, so the tag
-# cannot reach production, a static export, or a directly-run server.
+# Dev-only: the browser console bridge. `CASPIAN_BROWSER_SYNC_PORT` is normally
+# set only by settings/python-server.ts when the dev stack spawns this process,
+# so the tag does not reach production, a static export, or a directly-run
+# server. That is a convention about who sets the variable, though, not a
+# guarantee -- so the production check below enforces it, mirroring
+# `_dev_cookie_scope`, which returns "" outside development for the same reason.
 #
 # The script itself is served by BrowserSync's devLogMiddleware at this path; it
 # forwards `[PP-ERROR]` / `[PP-WARN]` output and uncaught errors to the terminal
@@ -1357,6 +1366,8 @@ _DEV_CONSOLE_BRIDGE_TAG = '<script src="/__pp-devlog.js"></script>'
 
 
 def _inject_dev_console_bridge(html_output: str) -> str:
+    if IS_PRODUCTION:
+        return html_output
     if not os.getenv("CASPIAN_BROWSER_SYNC_PORT"):
         return html_output
     if "</head>" not in html_output or "__pp-devlog.js" in html_output:
