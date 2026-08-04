@@ -82,6 +82,7 @@ def component_fixture_dir():
     finally:
         shutil.rmtree(scan_root, ignore_errors=True)
 
+
 # Keep the app in its non-production code paths during tests (dev security
 # headers, readable error messages, no HTTPS-only cookies).
 os.environ.setdefault("APP_ENV", "development")

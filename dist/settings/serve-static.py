@@ -115,8 +115,7 @@ def _serve(host: str, start_port: int, tries: int) -> int:
                 last_error = exc
                 if offset == 0:
                     print(
-                        f"{YELLOW}  Port {start_port} is busy; searching for a free "
-                        f"port...{RESET}"
+                        f"{YELLOW}  Port {start_port} is busy; searching for a free port...{RESET}"
                     )
                 continue
             # A different error (bad host, permissions, etc.) is not recoverable

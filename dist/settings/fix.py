@@ -10,14 +10,18 @@ removal — but only for files that contain no component-tag import, so componen
 imports are never at risk.
 
 Flow:
-  1. List F401 findings under the project config (respects include/exclude).
-  2. Split the owning files into "component-guarded" (has >=1 import used as an
+  1. Format first (`format.py`): `ruff format` for Python, djLint for the markup
+     inside `html(r\"\"\"...\"\"\")`. Formatting settles layout before anything
+     inspects the code, so the fixer and the gate report on the final shape
+     rather than on lines the formatter is about to move.
+  2. List F401 findings under the project config (respects include/exclude).
+  3. Split the owning files into "component-guarded" (has >=1 import used as an
      `<x-*>` tag) and the rest.
-  3. Remove dead imports only in the non-guarded files, via an isolated ruff run
+  4. Remove dead imports only in the non-guarded files, via an isolated ruff run
      (`--isolated` makes F401 fixable again; `--select F401` limits it to import
      removal; explicit file args keep the run scoped).
-  4. Apply every other safe fix under the real project config.
-  5. Run the gate (`check.py`) and exit with its status.
+  5. Apply every other safe fix under the real project config.
+  6. Run the gate (`check.py`) and exit with its status.
 """
 
 from __future__ import annotations
@@ -77,7 +81,21 @@ def _remove_dead_imports() -> list[str]:
     return fixable_files
 
 
+def _format() -> None:
+    """Run the formatter, but never let it block the fixer or the gate.
+
+    A formatting problem (a missing djLint, an unformattable block) must not
+    stop dead imports from being removed or the gate from reporting. `format.py`
+    prints its own summary, including anything it skipped.
+    """
+    subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "settings" / "format.py")],
+        cwd=PROJECT_ROOT,
+    )
+
+
 def main() -> int:
+    _format()
     _remove_dead_imports()
     # Every other safe fix under the real project config. F401 stays unfixable
     # here (dead imports were already handled above), so component imports are

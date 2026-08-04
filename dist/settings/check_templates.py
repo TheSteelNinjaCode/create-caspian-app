@@ -73,8 +73,7 @@ RULES: list[Rule] = [
         # `{items.map(item => (` and `{items.map((item, i) => (` -- the trailing
         # `(` is what distinguishes returning markup from a normal value map.
         re.compile(r"\{[^{}\n]*?\.map\s*\(\s*\(?[\w\s,]*\)?\s*=>\s*\(", re.MULTILINE),
-        "JSX .map() returning markup. Use <template pp-for=\"item in items\"> "
-        'with key="{item.id}".',
+        'JSX .map() returning markup. Use <template pp-for="item in items"> with key="{item.id}".',
     ),
     Rule(
         "jsx-logical",
@@ -86,8 +85,7 @@ RULES: list[Rule] = [
         "jsx-ternary-element",
         # `{cond ? <A` -- element directly after a ternary branch.
         re.compile(r"\{[^{}]*?\?\s*\(?\s*<[a-zA-Z]", re.DOTALL),
-        "JSX `{cond ? <A/> : <B/>}`. Use two elements with complementary "
-        'hidden="{...}" bindings.',
+        'JSX `{cond ? <A/> : <B/>}`. Use two elements with complementary hidden="{...}" bindings.',
     ),
     Rule(
         "unquoted-brace-attr",
@@ -114,7 +112,7 @@ RULES: list[Rule] = [
         ),
         "camelCase event prop. PulsePoint binds native lowercase event "
         'attributes: onclick="{handler()}". A component prop uses kebab-case '
-        '(on-click), which arrives as pp.props.onClick.',
+        "(on-click), which arrives as pp.props.onClick.",
     ),
     Rule(
         "jsx-fragment",
@@ -124,8 +122,7 @@ RULES: list[Rule] = [
     Rule(
         "style-object",
         re.compile(r"style\s*=\s*\{\{"),
-        "JSX style object. pp-style takes a CSS *string*: "
-        "pp-style=\"{'color: red'}\".",
+        "JSX style object. pp-style takes a CSS *string*: pp-style=\"{'color: red'}\".",
     ),
     Rule(
         "unknown-directive",
@@ -221,9 +218,7 @@ def lint_text(text: str, rel_path: str, *, is_python: bool = False) -> list[Temp
     for rule in RULES:
         for match in rule.pattern.finditer(markup):
             line, column = _position(markup, match.start())
-            issues.append(
-                TemplateIssue(rel_path, line, column, rule.code, rule.message)
-            )
+            issues.append(TemplateIssue(rel_path, line, column, rule.code, rule.message))
 
     for match in PP_FOR_TAG.finditer(markup):
         tag = match.group(1).lower()
@@ -284,6 +279,37 @@ FSTRING_MESSAGE = (
     "Return html(r'''...''', x=x) instead."
 )
 
+HTML_FORM_MESSAGE = (
+    "html(...) must take a raw triple-quoted literal: html(r'''...'''). It is "
+    "the single markup entrypoint, and one form keeps it readable and greppable. "
+    "A non-raw string silently rewrites backslashes, so a JS regex or a \\n in a "
+    "component script changes meaning between authoring and render; an f-string "
+    "additionally inverts the brace dialects and emits interpolated data raw. "
+    "Pass server values as context instead: html(r'''...{{ x }}...''', x=x)."
+)
+
+
+def _own_returns(func):
+    """The `return` statements belonging to `func` itself.
+
+    `ast.walk` would descend into nested `def`s and lambdas and attribute their
+    returns to the enclosing function. A `@component` may legitimately define a
+    private helper that builds a string fragment, so walking blind reports a
+    component that already returns `html(...)` and tells its author to do what
+    they have done -- which is how a gate loses its credibility.
+    """
+    import ast
+
+    stack = list(func.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            continue
+        if isinstance(node, ast.Return):
+            yield node
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+
 
 def _fstring_component_returns() -> list[tuple[str, str, int, int]]:
     """Every `@component` whose return value is an f-string.
@@ -298,20 +324,19 @@ def _fstring_component_returns() -> list[tuple[str, str, int, int]]:
             continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, SyntaxError):
+        except OSError, UnicodeDecodeError, SyntaxError:
             continue
         rel = path.relative_to(PROJECT_ROOT).as_posix()
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             decorators = {
-                getattr(d, "id", None) or getattr(d, "attr", None)
-                for d in node.decorator_list
+                getattr(d, "id", None) or getattr(d, "attr", None) for d in node.decorator_list
             }
             if "component" not in decorators:
                 continue
-            for stmt in ast.walk(node):
-                if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.JoinedStr):
+            for stmt in _own_returns(node):
+                if isinstance(stmt.value, ast.JoinedStr):
                     found.append((rel, node.name, stmt.lineno, stmt.col_offset + 1))
                     break
     return sorted(found)
@@ -322,7 +347,7 @@ def _load_fstring_baseline() -> set[str]:
 
     try:
         raw = json.loads(FSTRING_BASELINE_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return set()
     return set(raw.get("allowed", []))
 
@@ -350,6 +375,52 @@ def write_fstring_baseline() -> int:
     return len(entries)
 
 
+def _html_call_template_args():
+    """Every `html(...)` call's first argument, with its source text.
+
+    Yields `(rel_path, lineno, col, source_segment, node)`.
+    """
+    import ast
+
+    for path in _iter_files():
+        if path.suffix != ".py":
+            continue
+        try:
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source)
+        except OSError, UnicodeDecodeError, SyntaxError:
+            continue
+        rel = path.relative_to(PROJECT_ROOT).as_posix()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if name != "html" or not node.args:
+                continue
+            arg = node.args[0]
+            segment = ast.get_source_segment(source, arg) or ""
+            yield rel, arg.lineno, arg.col_offset + 1, segment, arg
+
+
+def lint_html_call_form() -> list[TemplateIssue]:
+    """`html(...)` takes a raw triple-quoted literal -- one form, no exceptions.
+
+    Two forms drifted apart in this repo once already: 437 calls used
+    `html(r'''...''')` and 133 did not, which makes the markup surface
+    un-greppable and lets a backslash mean two different things depending on
+    which call you are reading.
+    """
+    import ast
+
+    issues: list[TemplateIssue] = []
+    for rel, line, col, segment, arg in _html_call_template_args():
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            if segment.startswith(('r"""', "r'''", 'R"""', "R'''")):
+                continue
+        issues.append(TemplateIssue(rel, line, col, "html-form", HTML_FORM_MESSAGE))
+    return issues
+
+
 def lint_fstring_components() -> list[TemplateIssue]:
     allowed = _load_fstring_baseline()
     return [
@@ -365,7 +436,7 @@ def lint_templates() -> list[TemplateIssue]:
     for path in _iter_files():
         try:
             text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        except OSError, UnicodeDecodeError:
             continue
         # Cheap pre-filter: a file with no brace expression and no angle-bracket
         # markup cannot trip any rule.
@@ -374,6 +445,7 @@ def lint_templates() -> list[TemplateIssue]:
         rel = path.relative_to(PROJECT_ROOT).as_posix()
         issues.extend(lint_text(text, rel, is_python=path.suffix == ".py"))
     issues.extend(lint_fstring_components())
+    issues.extend(lint_html_call_form())
     return issues
 
 
@@ -400,10 +472,7 @@ def main() -> int:
     for path in sorted(by_file):
         print(path)
         for issue in sorted(by_file[path], key=lambda i: (i.line, i.column)):
-            print(
-                f"  {issue.line}:{issue.column}  "
-                f"[templates:{issue.code}] {issue.message}"
-            )
+            print(f"  {issue.line}:{issue.column}  [templates:{issue.code}] {issue.message}")
 
     print(f"\n{len(issues)} template issue(s) found.")
     return 1

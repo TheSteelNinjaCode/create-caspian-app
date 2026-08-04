@@ -130,12 +130,16 @@ def _build_mcp_cors_middleware() -> "Middleware":
             origins = ["*"]
         allow_credentials = False
 
-    methods = _csv_env("CORS_ALLOWED_METHODS") or [
-        "GET", "POST", "DELETE", "OPTIONS"]
+    methods = _csv_env("CORS_ALLOWED_METHODS") or ["GET", "POST", "DELETE", "OPTIONS"]
 
     headers = _csv_env("CORS_ALLOWED_HEADERS")
-    for required in ("Content-Type", "Accept", "Authorization",
-                     "mcp-session-id", "mcp-protocol-version"):
+    for required in (
+        "Content-Type",
+        "Accept",
+        "Authorization",
+        "mcp-session-id",
+        "mcp-protocol-version",
+    ):
         if required.lower() not in {h.lower() for h in headers}:
             headers.append(required)
 
@@ -233,6 +237,7 @@ if cfg.mcp:
     # Optional, feature-gated module: only generated when mcp is enabled in
     # caspian.config.json, so suppress the static "module not found" check.
     from src.lib.mcp.mcp_server import mcp  # type: ignore[import-not-found]
+
     # Inner path "/" so the mount prefix below is the full endpoint path.
     # CORS is outermost so preflight is answered before the token check.
     mcp_app = mcp.http_app(
@@ -312,6 +317,7 @@ async def combined_lifespan(app: FastAPI):
 
         yield
 
+
 app = FastAPI(
     title=cfg.projectName,
     version=cfg.version,
@@ -326,22 +332,23 @@ app = FastAPI(
 async def healthcheck():
     return {"status": "ok"}
 
+
 # ====
 # Configuration
 # ====
-SESSION_LIFETIME_HOURS = int(os.getenv('SESSION_LIFETIME_HOURS', 7))
-MAX_CONTENT_LENGTH_MB = int(os.getenv('MAX_CONTENT_LENGTH_MB', 16))
-CACHE_ENABLED = os.getenv('CACHE_ENABLED', 'false').lower() == 'true'
-DEFAULT_TTL = int(os.getenv('CACHE_TTL', 600))
+SESSION_LIFETIME_HOURS = int(os.getenv("SESSION_LIFETIME_HOURS", 7))
+MAX_CONTENT_LENGTH_MB = int(os.getenv("MAX_CONTENT_LENGTH_MB", 16))
+CACHE_ENABLED = os.getenv("CACHE_ENABLED", "false").lower() == "true"
+DEFAULT_TTL = int(os.getenv("CACHE_TTL", 600))
 REQUEST_TIMEOUT_SECONDS = max(
     1.0,
-    float(os.getenv('CASPIAN_REQUEST_TIMEOUT_SECONDS', 20)),
+    float(os.getenv("CASPIAN_REQUEST_TIMEOUT_SECONDS", 20)),
 )
 # Path prefixes that serve long-lived streaming responses (SSE, etc.) and must
 # not be subject to the per-request timeout. The MCP streamable-HTTP transport
 # keeps GET /mcp/ open indefinitely; wrapping it in asyncio.wait_for cancels the
 # stream mid-response and corrupts the ASGI message sequence.
-STREAMING_PATH_PREFIXES = ('/mcp',)
+STREAMING_PATH_PREFIXES = ("/mcp",)
 # Public assets: exempt from auth, request logging, and rate limiting, since one
 # page load pulls many of them.
 MAX_CONTENT_LENGTH_BYTES = max(1, MAX_CONTENT_LENGTH_MB) * 1024 * 1024
@@ -365,9 +372,7 @@ def _build_security_headers() -> dict[str, str]:
 
 # The header set depends only on IS_PRODUCTION, so build it once at import time
 # instead of allocating an identical dict on every single response.
-SECURITY_HEADERS: tuple[tuple[str, str], ...] = tuple(
-    _build_security_headers().items()
-)
+SECURITY_HEADERS: tuple[tuple[str, str], ...] = tuple(_build_security_headers().items())
 
 
 def _dev_cookie_scope() -> str:
@@ -382,15 +387,13 @@ def _dev_cookie_scope() -> str:
         bs_config_path = Path("settings/bs-config.json")
         if bs_config_path.exists():
             try:
-                local_url = json.loads(
-                    bs_config_path.read_text(encoding="utf-8")
-                ).get("local", "")
+                local_url = json.loads(bs_config_path.read_text(encoding="utf-8")).get("local", "")
                 parsed_url = urlparse(local_url)
                 if parsed_url.hostname in {"localhost", "127.0.0.1"}:
                     scope = str(parsed_url.port or "")
                 else:
                     scope = ""
-            except (OSError, json.JSONDecodeError):
+            except OSError, json.JSONDecodeError:
                 scope = ""
 
     return scope if scope and scope.isdigit() else ""
@@ -402,9 +405,7 @@ def _scoped_cookie_name(base_name: str) -> str:
 
 
 CSRF_COOKIE_NAME = _scoped_cookie_name("pp_csrf")
-SESSION_COOKIE_NAME = _scoped_cookie_name(
-    os.getenv('AUTH_COOKIE_NAME', 'session')
-)
+SESSION_COOKIE_NAME = _scoped_cookie_name(os.getenv("AUTH_COOKIE_NAME", "session"))
 
 # ====
 # Pure ASGI Middleware Classes
@@ -414,7 +415,8 @@ SESSION_COOKIE_NAME = _scoped_cookie_name(
 class CSRFMiddleware:
     """CSRF middleware that properly handles session modifications."""
 
-    def __init__(self, app: ASGIApp): self.app = app
+    def __init__(self, app: ASGIApp):
+        self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http":
@@ -436,13 +438,15 @@ class CSRFMiddleware:
                 new_headers.append((b"set-cookie", cookie_value.encode()))
                 message = {**message, "headers": new_headers}
             await send(message)
+
         await self.app(scope, receive, send_wrapper)
 
 
 class SecurityHeadersMiddleware:
     """Attach baseline browser security headers to HTTP responses."""
 
-    def __init__(self, app: ASGIApp): self.app = app
+    def __init__(self, app: ASGIApp):
+        self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http":
@@ -465,7 +469,8 @@ class SecurityHeadersMiddleware:
 class BodySizeLimitMiddleware:
     """Reject oversized HTTP request bodies before route or RPC parsing."""
 
-    def __init__(self, app: ASGIApp): self.app = app
+    def __init__(self, app: ASGIApp):
+        self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http":
@@ -526,7 +531,8 @@ class BodySizeLimitMiddleware:
 class AuthMiddleware:
     """Auth middleware using pure ASGI pattern for proper session handling."""
 
-    def __init__(self, app: ASGIApp): self.app = app
+    def __init__(self, app: ASGIApp):
+        self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http":
@@ -553,8 +559,7 @@ class AuthMiddleware:
         if auth_inst.is_auth_route(path):
             if is_authenticated:
                 await RedirectResponse(
-                    url=auth_inst.settings.default_signin_redirect,
-                    status_code=303
+                    url=auth_inst.settings.default_signin_redirect, status_code=303
                 )(scope, receive, send)
                 return
             await self.app(scope, receive, send)
@@ -570,7 +575,9 @@ class AuthMiddleware:
                     )(scope, receive, send)
                     return
                 if not auth_inst.check_role(auth_inst.get_payload(), required_roles):
-                    await RedirectResponse(url='/unauthorized', status_code=303)(scope, receive, send)
+                    await RedirectResponse(url="/unauthorized", status_code=303)(
+                        scope, receive, send
+                    )
                     return
 
         if auth_inst.is_private_route(path):
@@ -587,24 +594,25 @@ class AuthMiddleware:
 class RPCMiddleware:
     """RPC middleware using pure ASGI pattern."""
 
-    def __init__(self, app: ASGIApp): self.app = app
+    def __init__(self, app: ASGIApp):
+        self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
         request = Request(scope, receive, send)
-        if request.headers.get('X-PP-RPC') == 'true' and request.method == 'POST':
+        if request.headers.get("X-PP-RPC") == "true" and request.method == "POST":
             from casp.rpc import _handle_rpc_request
-            session = dict(request.session) if hasattr(
-                request, 'session') else {}
+
+            session = dict(request.session) if hasattr(request, "session") else {}
             response = await _handle_rpc_request(request, session)
             await response(scope, receive, send)
             return
         await self.app(scope, receive, send)
 
 
-RATE_LIMIT_PAGES = os.getenv('RATE_LIMIT_PAGES', '200/minute')
+RATE_LIMIT_PAGES = os.getenv("RATE_LIMIT_PAGES", "200/minute")
 
 
 def client_ip(request: Request) -> str:
@@ -616,13 +624,13 @@ def client_ip(request: Request) -> str:
     `TRUST_FORWARDED_HEADERS`, because a client can otherwise set that header
     itself and mint a fresh bucket per request.
     """
-    if _bool_env('TRUST_FORWARDED_HEADERS'):
-        forwarded = request.headers.get('x-forwarded-for', '')
-        first_hop = forwarded.split(',', 1)[0].strip()
+    if _bool_env("TRUST_FORWARDED_HEADERS"):
+        forwarded = request.headers.get("x-forwarded-for", "")
+        first_hop = forwarded.split(",", 1)[0].strip()
         if first_hop:
             return first_hop
 
-    return request.client.host if request.client else 'unknown'
+    return request.client.host if request.client else "unknown"
 
 
 class RateLimitMiddleware:
@@ -648,20 +656,17 @@ class RateLimitMiddleware:
             return
 
         path = scope.get("path", "")
-        if path == '/health':
+        if path == "/health":
             await self.app(scope, receive, send)
             return
 
         request = Request(scope, receive, send)
-        allowed, wait_seconds = rpc_limiter.check(
-            '__page__', client_ip(request), RATE_LIMIT_PAGES
-        )
+        allowed, wait_seconds = rpc_limiter.check("__page__", client_ip(request), RATE_LIMIT_PAGES)
 
         if not allowed:
             response = HTMLResponse(
                 content=(
-                    "<h1>429 - Too Many Requests</h1>"
-                    "<p>Please slow down and try again shortly.</p>"
+                    "<h1>429 - Too Many Requests</h1><p>Please slow down and try again shortly.</p>"
                 ),
                 status_code=429,
                 headers={"Retry-After": str(math.ceil(wait_seconds))},
@@ -675,7 +680,8 @@ class RateLimitMiddleware:
 class RequestDiagnosticsMiddleware:
     """Log request start/end in dev and fail visibly when a route stalls."""
 
-    def __init__(self, app: ASGIApp): self.app = app
+    def __init__(self, app: ASGIApp):
+        self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http":
@@ -687,9 +693,10 @@ class RequestDiagnosticsMiddleware:
         is_public_file = (
             method in {"GET", "HEAD"}
             and resolve_safe_public_path(
-                'public',
-                path.lstrip('/'),
-            ) is not None
+                "public",
+                path.lstrip("/"),
+            )
+            is not None
         )
         should_log = not is_public_file
         started = time.perf_counter()
@@ -728,14 +735,12 @@ class RequestDiagnosticsMiddleware:
         except Exception:
             if should_log and not IS_PRODUCTION:
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
-                print(
-                    f"[request:error] {method} {path} after {elapsed_ms}ms", flush=True)
+                print(f"[request:error] {method} {path} after {elapsed_ms}ms", flush=True)
             raise
         finally:
             if should_log and not IS_PRODUCTION:
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
-                print(
-                    f"[request:end] {method} {path} {elapsed_ms}ms", flush=True)
+                print(f"[request:end] {method} {path} {elapsed_ms}ms", flush=True)
 
 
 # ====
@@ -885,7 +890,7 @@ def is_request_cacheable(request: Request) -> bool:
     know whether the page it just rendered contains per-user data, so the
     presence of an authenticated session is the safe signal.
     """
-    if request.method != 'GET':
+    if request.method != "GET":
         return False
 
     try:
@@ -899,7 +904,7 @@ def register_routes():
     idx = get_files_index()
     for route in idx.routes:
         base_path = f"src/app/{route.fs_dir}" if route.fs_dir else "src/app"
-        full_path = f"{base_path}/index.py".replace('//', '/')
+        full_path = f"{base_path}/index.py".replace("//", "/")
         register_single_route(route.fastapi_rule, full_path)
 
 
@@ -929,7 +934,7 @@ def register_single_route(url_pattern: str, file_path: str):
         page_content_source = file_path
 
         module = load_route_module(file_path)
-        if not hasattr(module, 'page'):
+        if not hasattr(module, "page"):
             raise AttributeError(f"Missing 'def page():' in {file_path}")
 
         sig = get_page_signature(file_path, module.page)
@@ -938,8 +943,8 @@ def register_single_route(url_pattern: str, file_path: str):
 
         if kwargs:
             call_args.append(kwargs)
-        if 'request' in sig.parameters:
-            call_kwargs['request'] = request
+        if "request" in sig.parameters:
+            call_kwargs["request"] = request
 
         for name, param in sig.parameters.items():
             if name in call_kwargs:
@@ -949,8 +954,7 @@ def register_single_route(url_pattern: str, file_path: str):
             if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
                 continue
             if name in request.query_params:
-                call_kwargs[name] = _coerce_query_param(
-                    request, name, param)
+                call_kwargs[name] = _coerce_query_param(request, name, param)
 
         if inspect.iscoroutinefunction(module.page):
             result = await module.page(*call_args, **call_kwargs)
@@ -963,7 +967,7 @@ def register_single_route(url_pattern: str, file_path: str):
         if inspect.isasyncgen(result) or inspect.isgenerator(result):
             return SSE(cast("AsyncGenerator | Generator", result))
 
-        cache_settings = getattr(module, 'cache_settings', None)
+        cache_settings = getattr(module, "cache_settings", None)
         if cache_settings:
             req_should_cache = cache_settings.enabled
             req_cache_ttl = cache_settings.ttl
@@ -971,25 +975,24 @@ def register_single_route(url_pattern: str, file_path: str):
         if isinstance(result, tuple):
             page_content = result[0]
             content = str(page_content)
-            page_content_source = getattr(
-                page_content, 'source_path', file_path)
+            page_content_source = getattr(page_content, "source_path", file_path)
             if len(result) >= 2 and isinstance(result[1], dict):
                 page_layout_props = result[1]
         else:
             content = str(result)
-            page_content_source = getattr(result, 'source_path', file_path)
+            page_content_source = getattr(result, "source_path", file_path)
 
         dynamic_meta = _runtime_metadata.get()
-        static_meta = getattr(module, 'metadata', None)
+        static_meta = getattr(module, "metadata", None)
 
         def extract_meta(obj):
             d = {}
             if not obj:
                 return d
             if obj.title:
-                d['title'] = obj.title
+                d["title"] = obj.title
             if obj.description:
-                d['description'] = obj.description
+                d["description"] = obj.description
             if obj.extra:
                 d.update(obj.extra)
             return d
@@ -1007,12 +1010,12 @@ def register_single_route(url_pattern: str, file_path: str):
             context_data=full_context,
             page_component_source=page_content_source,
             control_mode=True,
-            component_compiler=transform_components
+            component_compiler=transform_components,
         )
 
         html_output = finalize_html(html_output)
         response = HTMLResponse(content=html_output)
-        response.headers['X-PP-Root-Layout'] = root_layout_id
+        response.headers["X-PP-Root-Layout"] = root_layout_id
 
         # Cache Save Logic
         should_cache = False
@@ -1032,23 +1035,27 @@ def register_single_route(url_pattern: str, file_path: str):
 
         return response
 
-    endpoint = file_path.replace('/', '_').replace('\\', '_').replace(
-        '.', '_').replace('[', '').replace(']', '').replace('(', '').replace(')', '')
+    endpoint = (
+        file_path.replace("/", "_")
+        .replace("\\", "_")
+        .replace(".", "_")
+        .replace("[", "")
+        .replace("]", "")
+        .replace("(", "")
+        .replace(")", "")
+    )
 
-    route_methods = ['GET', 'POST']
+    route_methods = ["GET", "POST"]
     module = load_route_module(file_path)
-    declared_route_methods = getattr(module, 'route_methods', None)
+    declared_route_methods = getattr(module, "route_methods", None)
     if isinstance(declared_route_methods, (list, tuple)) and declared_route_methods:
         normalized_methods = [
-            str(method).strip().upper()
-            for method in declared_route_methods
-            if str(method).strip()
+            str(method).strip().upper() for method in declared_route_methods if str(method).strip()
         ]
         if normalized_methods:
             route_methods = list(dict.fromkeys(normalized_methods))
 
-    app.add_api_route(url_pattern, make_handler,
-                      methods=route_methods, name=endpoint)
+    app.add_api_route(url_pattern, make_handler, methods=route_methods, name=endpoint)
 
 
 def defer_component_roots(html_output: str) -> str:
@@ -1068,7 +1075,7 @@ def defer_component_roots(html_output: str) -> str:
     outer template is materialized, so morphing and RPC re-render still operate
     on live ``[pp-component]`` DOM.
     """
-    if 'pp-component' not in html_output:
+    if "pp-component" not in html_output:
         return html_output
 
     # Fast path: the render pipeline recorded the page subtree's exact
@@ -1079,11 +1086,7 @@ def defer_component_roots(html_output: str) -> str:
     # the region string-level. Every mismatch falls back to the full parse.
     if not _DEFER_FAST_DISABLED:
         region = _finalize_page_region.get()
-        if (
-            region
-            and len(region) >= _DEFER_REGION_MIN_BYTES
-            and html_output.count(region) == 1
-        ):
+        if region and len(region) >= _DEFER_REGION_MIN_BYTES and html_output.count(region) == 1:
             deferred = _defer_with_verbatim_region(html_output, region)
             if deferred is not None:
                 return deferred
@@ -1093,8 +1096,12 @@ def defer_component_roots(html_output: str) -> str:
     return _defer_component_roots_in_soup(soup, placeholders, html_output)
 
 
-_DEFER_FAST_DISABLED = os.getenv(
-    'CASP_DEFER_FAST', '').strip().lower() in {'0', 'off', 'false', 'no'}
+_DEFER_FAST_DISABLED = os.getenv("CASP_DEFER_FAST", "").strip().lower() in {
+    "0",
+    "off",
+    "false",
+    "no",
+}
 # Below this, masking the region saves less than the two extra scans it costs.
 _DEFER_REGION_MIN_BYTES = 4096
 
@@ -1111,8 +1118,7 @@ def _protect_region_brace_entities(value: str) -> str:
     """
     from casp.html_native import _ESCAPED_BRACE_ENTITY_RE
 
-    return _ESCAPED_BRACE_ENTITY_RE.sub(
-        lambda match: '&amp;' + match.group(0)[1:], value)
+    return _ESCAPED_BRACE_ENTITY_RE.sub(lambda match: "&amp;" + match.group(0)[1:], value)
 
 
 def _defer_with_verbatim_region(html_output: str, region: str) -> Optional[str]:
@@ -1130,10 +1136,9 @@ def _defer_with_verbatim_region(html_output: str, region: str) -> Optional[str]:
     # stripped core.
     region_root_key = None
     region_core = region.strip()
-    open_tag_end = region_core.find('>')
-    if region_core.startswith('<') and open_tag_end > 0:
-        key_match = re.search(
-            r'\spp-component="([^"]+)"', region_core[:open_tag_end + 1])
+    open_tag_end = region_core.find(">")
+    if region_core.startswith("<") and open_tag_end > 0:
+        key_match = re.search(r'\spp-component="([^"]+)"', region_core[: open_tag_end + 1])
         if key_match:
             region_root_key = key_match.group(1)
 
@@ -1160,51 +1165,47 @@ def _defer_with_verbatim_region(html_output: str, region: str) -> Optional[str]:
     # template (the outermost one gets wrapped below, or already is one), so
     # its entities need the protection layer but no wrapper of its own.
     region_enclosed = any(
-        isinstance(parent, Tag) and parent.has_attr('pp-component')
-        for parent in token_node.parents
+        isinstance(parent, Tag) and parent.has_attr("pp-component") for parent in token_node.parents
     )
 
-    if not region_enclosed and region_root_key is None and 'pp-component' in region:
+    if not region_enclosed and region_root_key is None and "pp-component" in region:
         # Boundaries live inside the region but its root is not one: they
         # would need wrapping at arbitrary depth, which only the tree pass can
         # locate.
         return None
 
     roots = []
-    stack = [
-        child for child in reversed(body.contents) if isinstance(child, Tag)
-    ]
+    stack = [child for child in reversed(body.contents) if isinstance(child, Tag)]
     while stack:
         el = stack.pop()
-        if el.has_attr('pp-component'):
-            if el.name != 'template':
+        if el.has_attr("pp-component"):
+            if el.name != "template":
                 roots.append(el)
             continue
-        stack.extend(
-            child for child in reversed(el.contents) if isinstance(child, Tag)
-        )
+        stack.extend(child for child in reversed(el.contents) if isinstance(child, Tag))
 
     for root in roots:
-        key = root.get('pp-component')
+        key = root.get("pp-component")
         if key is None:
             continue
-        template = soup.new_tag('template')
-        template['pp-component'] = key
+        template = soup.new_tag("template")
+        template["pp-component"] = key
         root.insert_before(template)
         template.append(root.extract())
 
     if placeholders:
+
         def protect_brace_entities(value: str) -> str:
             return _ESCAPED_BRACE_PLACEHOLDER_RE.sub(
                 lambda match: placeholders.get(match.group(0), match.group(0)),
                 value,
             )
 
-        for template in body.select('template[pp-component]'):
+        for template in body.select("template[pp-component]"):
             for node in list(template.descendants):
                 if isinstance(node, NavigableString):
                     original = str(node)
-                    if '__PP_ESCAPED_BRACE_' not in original:
+                    if "__PP_ESCAPED_BRACE_" not in original:
                         continue
                     content = protect_brace_entities(original)
                     if content != original:
@@ -1212,18 +1213,16 @@ def _defer_with_verbatim_region(html_output: str, region: str) -> Optional[str]:
                 elif isinstance(node, Tag):
                     for name, value in node.attrs.items():
                         if isinstance(value, str):
-                            if '__PP_ESCAPED_BRACE_' in value:
-                                node.attrs[name] = protect_brace_entities(
-                                    value)
+                            if "__PP_ESCAPED_BRACE_" in value:
+                                node.attrs[name] = protect_brace_entities(value)
                         elif isinstance(value, list):
                             for index, item in enumerate(value):
                                 item = str(item)
-                                if '__PP_ESCAPED_BRACE_' in item:
+                                if "__PP_ESCAPED_BRACE_" in item:
                                     item = protect_brace_entities(item)
                                 value[index] = item
 
-    serialized = restore_escaped_brace_entities(
-        serialize_fragment(soup), placeholders)
+    serialized = restore_escaped_brace_entities(serialize_fragment(soup), placeholders)
     if token not in serialized:
         return None
 
@@ -1235,15 +1234,15 @@ def _defer_with_verbatim_region(html_output: str, region: str) -> Optional[str]:
         # would be ambiguous to split off string-level, so leave that shape to
         # the full parse.
         core = region_core
-        if not core.startswith('<') or core[1] in ('!', '?') or core.endswith('-->'):
+        if not core.startswith("<") or core[1] in ("!", "?") or core.endswith("-->"):
             return None
-        prefix_len = region.find('<')
+        prefix_len = region.find("<")
         prefix = region[:prefix_len]
-        suffix = region[prefix_len + len(core):]
+        suffix = region[prefix_len + len(core) :]
         region_out = (
             f'{prefix}<template pp-component="{region_root_key}">'
-            f'{_protect_region_brace_entities(core)}'
-            f'</template>{suffix}'
+            f"{_protect_region_brace_entities(core)}"
+            f"</template>{suffix}"
         )
     else:
         region_out = region
@@ -1261,6 +1260,7 @@ def _defer_component_roots_in_soup(
     Split out so callers that already parsed the document can reuse the
     component-deferral pass.
     """
+
     def unchanged() -> str:
         return fallback_html
 
@@ -1277,27 +1277,23 @@ def _defer_component_roots_in_soup(
     # element already inside a ``<template pp-component>`` stays untouched,
     # matching the ancestor-check semantics.
     roots = []
-    stack = [
-        child for child in reversed(body.contents) if isinstance(child, Tag)
-    ]
+    stack = [child for child in reversed(body.contents) if isinstance(child, Tag)]
     while stack:
         el = stack.pop()
-        if el.has_attr('pp-component'):
-            if el.name != 'template':
+        if el.has_attr("pp-component"):
+            if el.name != "template":
                 roots.append(el)
             continue
-        stack.extend(
-            child for child in reversed(el.contents) if isinstance(child, Tag)
-        )
+        stack.extend(child for child in reversed(el.contents) if isinstance(child, Tag))
     if not roots:
         return unchanged()
 
     for root in roots:
-        key = root.get('pp-component')
+        key = root.get("pp-component")
         if key is None:
             continue
-        template = soup.new_tag('template')
-        template['pp-component'] = key
+        template = soup.new_tag("template")
+        template["pp-component"] = key
         root.insert_before(template)
         template.append(root.extract())
 
@@ -1321,11 +1317,11 @@ def _defer_component_roots_in_soup(
                 value,
             )
 
-        for template in body.select('template[pp-component]'):
+        for template in body.select("template[pp-component]"):
             for node in list(template.descendants):
                 if isinstance(node, NavigableString):
                     original = str(node)
-                    if '__PP_ESCAPED_BRACE_' not in original:
+                    if "__PP_ESCAPED_BRACE_" not in original:
                         continue
                     content = protect_brace_entities(original)
                     if content != original:
@@ -1333,13 +1329,12 @@ def _defer_component_roots_in_soup(
                 elif isinstance(node, Tag):
                     for name, value in node.attrs.items():
                         if isinstance(value, str):
-                            if '__PP_ESCAPED_BRACE_' in value:
-                                node.attrs[name] = protect_brace_entities(
-                                    value)
+                            if "__PP_ESCAPED_BRACE_" in value:
+                                node.attrs[name] = protect_brace_entities(value)
                         elif isinstance(value, list):
                             for index, item in enumerate(value):
                                 item = str(item)
-                                if '__PP_ESCAPED_BRACE_' in item:
+                                if "__PP_ESCAPED_BRACE_" in item:
                                     item = protect_brace_entities(item)
                                 value[index] = item
 
@@ -1364,11 +1359,9 @@ _DEV_CONSOLE_BRIDGE_TAG = '<script src="/__pp-devlog.js"></script>'
 def _inject_dev_console_bridge(html_output: str) -> str:
     if not os.getenv("CASPIAN_BROWSER_SYNC_PORT"):
         return html_output
-    if '</head>' not in html_output or '__pp-devlog.js' in html_output:
+    if "</head>" not in html_output or "__pp-devlog.js" in html_output:
         return html_output
-    return html_output.replace(
-        '</head>', f'{_DEV_CONSOLE_BRIDGE_TAG}</head>', 1
-    )
+    return html_output.replace("</head>", f"{_DEV_CONSOLE_BRIDGE_TAG}</head>", 1)
 
 
 def finalize_html(html_output: str) -> str:
@@ -1462,19 +1455,19 @@ async def _render_special_page(
 @app.exception_handler(StarletteHTTPException)
 async def custom_404_handler(request: Request, exc: StarletteHTTPException):
     if exc.status_code == 404:
-        not_found_path = os.path.join('src', 'app', 'not_found.py')
+        not_found_path = os.path.join("src", "app", "not_found.py")
         if os.path.exists(not_found_path):
             html_output, root_layout_id = await _render_special_page(
                 page_path=not_found_path,
                 request=request,
                 default_metadata={
-                    'title': "Page Not Found",
-                    'description': "The page you are looking for does not exist."
+                    "title": "Page Not Found",
+                    "description": "The page you are looking for does not exist.",
                 },
                 context_data={},
             )
             resp = HTMLResponse(content=html_output, status_code=404)
-            resp.headers['X-PP-Root-Layout'] = root_layout_id
+            resp.headers["X-PP-Root-Layout"] = root_layout_id
             return resp
     return HTMLResponse(content=f"<h1>{exc.detail}</h1>", status_code=exc.status_code)
 
@@ -1486,29 +1479,32 @@ async def custom_general_exception_handler(request: Request, exc: Exception):
     error_message = _client_error_message(exc)
     error_trace = full_trace if not IS_PRODUCTION else None
 
-    error_page_path = os.path.join('src', 'app', 'error.py')
+    error_page_path = os.path.join("src", "app", "error.py")
     if os.path.exists(error_page_path):
-        context_data = {'request': request,
-                        'error_message': error_message, 'error_trace': error_trace}
+        context_data = {
+            "request": request,
+            "error_message": error_message,
+            "error_trace": error_trace,
+        }
         try:
             html_output, root_layout_id = await _render_special_page(
                 page_path=error_page_path,
                 request=request,
                 default_metadata={
-                    'title': 'Application Error',
-                    'description': 'An unexpected error occurred.'
+                    "title": "Application Error",
+                    "description": "An unexpected error occurred.",
                 },
                 context_data=context_data,
             )
             resp = HTMLResponse(content=html_output, status_code=500)
-            resp.headers['X-PP-Root-Layout'] = root_layout_id
+            resp.headers["X-PP-Root-Layout"] = root_layout_id
             return resp
         except Exception as render_exc:
             print("Error rendering error.py:", render_exc)
     return HTMLResponse(
-        content=f"<h1>500 - Internal Server Error</h1><p>{error_message}</p>",
-        status_code=500
+        content=f"<h1>500 - Internal Server Error</h1><p>{error_message}</p>", status_code=500
     )
+
 
 # ====
 # Middleware Order (LAST added runs FIRST)
@@ -1522,9 +1518,9 @@ app.add_middleware(
     secret_key=_get_session_secret(),
     session_cookie=SESSION_COOKIE_NAME,
     max_age=SESSION_LIFETIME_HOURS * 3600,
-    same_site='lax',
+    same_site="lax",
     https_only=IS_PRODUCTION,
-    path='/',
+    path="/",
 )
 app.add_middleware(BodySizeLimitMiddleware)
 # Outermost of the security layers: reject flooding before any session
@@ -1535,9 +1531,9 @@ app.add_middleware(RateLimitMiddleware)
 # in attachment mode unless its MIME type is explicitly safe to render inline.
 app.add_middleware(
     PublicFilesMiddleware,
-    directory='public',
+    directory="public",
     inline_safe_subdirectories={
-        'uploads': INLINE_SAFE_UPLOAD_MEDIA_TYPES,
+        "uploads": INLINE_SAFE_UPLOAD_MEDIA_TYPES,
     },
 )
 app.add_middleware(SecurityHeadersMiddleware)
@@ -1545,9 +1541,9 @@ app.add_middleware(SecurityHeadersMiddleware)
 if not IS_PRODUCTION:
     app.add_middleware(RequestDiagnosticsMiddleware)
 
-if __name__ == '__main__':
-    port = int(os.getenv('PORT', 5091))
-    workers = max(1, int(os.getenv('UVICORN_WORKERS', '1')))
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5091))
+    workers = max(1, int(os.getenv("UVICORN_WORKERS", "1")))
     uvicorn.run(
         "main:app",
         host="0.0.0.0",

@@ -19,6 +19,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
+
 # Mirror of casp.string_helpers.camel_to_kebab. Kept in lockstep so the tag we
 # look for matches the tag the compiler actually resolves.
 def camel_to_kebab(name: str) -> str:

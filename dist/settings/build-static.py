@@ -191,9 +191,7 @@ def build() -> int:
 
         if resp.status_code in (301, 302, 303, 307, 308):
             target = resp.headers.get("location", "?")
-            skipped.append(
-                (url, f"redirects to {target} -- likely auth-gated, needs the server")
-            )
+            skipped.append((url, f"redirects to {target} -- likely auth-gated, needs the server"))
             return
 
         if resp.status_code != 200:
@@ -232,7 +230,10 @@ def build() -> int:
                         param_sets = await _resolve_static_paths(route)
                         if not param_sets:
                             skipped.append(
-                                (url, "dynamic route -- add static_paths() to its index.py to pre-render (like getStaticPaths)")
+                                (
+                                    url,
+                                    "dynamic route -- add static_paths() to its index.py to pre-render (like getStaticPaths)",
+                                )
                             )
                             continue
                         for params in param_sets:

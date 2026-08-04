@@ -96,7 +96,7 @@ class TestDeferComponentRoots:
 
     def test_component_root_is_wrapped_in_template(self):
         # The transform operates on a full document body, as in production.
-        html = "<body><div pp-component=\"abc\"><span>x</span></div></body>"
+        html = '<body><div pp-component="abc"><span>x</span></div></body>'
         out = main.defer_component_roots(html)
         assert "<template" in out
         assert 'pp-component="abc"' in out
@@ -106,8 +106,8 @@ class TestDeferComponentRoots:
             '<body><div pp-component="abc" '
             'title="&#123;attr&#125;" '
             'class="probe &#x7b;active&#x7d;">'
-            '&lbrace;text&rbrace;'
-            '</div><p>&#123;outside&#125;</p></body>'
+            "&lbrace;text&rbrace;"
+            "</div><p>&#123;outside&#125;</p></body>"
         )
 
         out = main.defer_component_roots(html)
@@ -118,10 +118,7 @@ class TestDeferComponentRoots:
         assert "<p>&#123;outside&#125;</p>" in out
 
     def test_finalize_html_defers_and_preserves_plain_scripts(self):
-        html = (
-            "<body><div pp-component=\"abc\">"
-            "<script>console.log(1)</script></div></body>"
-        )
+        html = '<body><div pp-component="abc"><script>console.log(1)</script></div></body>'
         out = main.finalize_html(html)
         assert "<script>console.log(1)</script>" in out
         assert "<template" in out

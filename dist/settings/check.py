@@ -46,6 +46,7 @@ def _is_component_import_false_positive(issue: Issue) -> bool:
         return False
     return ci.is_component_tag_f401(issue.message, issue.path)
 
+
 # Terminal colors (disabled automatically when output is not a TTY).
 _TTY = sys.stdout.isatty()
 
@@ -53,7 +54,7 @@ _TTY = sys.stdout.isatty()
 # characters; ask for UTF-8 with a safe fallback so output never crashes.
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-except (AttributeError, ValueError):
+except AttributeError, ValueError:
     pass
 
 
@@ -288,7 +289,7 @@ def run_pytest() -> Result:
         for line in (proc.stdout + proc.stderr).splitlines():
             stripped = line.strip()
             if stripped.startswith("FAILED "):
-                body = stripped[len("FAILED "):]
+                body = stripped[len("FAILED ") :]
                 nodeid, _, reason = body.partition(" - ")
                 path, _, _ = nodeid.partition("::")
                 issues.append(
@@ -362,7 +363,9 @@ def _execute(label: str, runner, *, streamed: bool) -> Result:
     elapsed = time.perf_counter() - start
     mark = green("OK  ") if result.ok else red("FAIL")
     count = len(result.issues)
-    detail = "" if result.ok else f"  ({count} issue(s))" if count else f"  ({result.note or 'failed'})"
+    detail = (
+        "" if result.ok else f"  ({count} issue(s))" if count else f"  ({result.note or 'failed'})"
+    )
     print(f"  {mark} {label}  {elapsed:0.1f}s{detail}")
     return result
 

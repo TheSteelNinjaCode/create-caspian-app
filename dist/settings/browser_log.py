@@ -68,7 +68,7 @@ LOG_FILE = PROJECT_ROOT / ".casp" / "browser-log.jsonl"
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-except (AttributeError, ValueError):
+except AttributeError, ValueError:
     pass
 
 _TTY = sys.stdout.isatty()
@@ -254,7 +254,9 @@ def build_report(path: Path = LOG_FILE) -> LogReport:
 
         if not loads:
             routes.append(
-                RouteStatus(route=route, last_load="", errors=[], warnings=[], healed=0, recheck=recheck)
+                RouteStatus(
+                    route=route, last_load="", errors=[], warnings=[], healed=0, recheck=recheck
+                )
             )
             continue
 
@@ -336,8 +338,7 @@ _SESSION_LINES = {
     ),
     "ended": (
         "dev session ended cleanly",
-        "The dev server has shut down. The results below are from that "
-        "finished session.",
+        "The dev server has shut down. The results below are from that finished session.",
     ),
 }
 
@@ -369,7 +370,9 @@ def print_report(report: LogReport) -> None:
     if report.session == "live":
         age = _age(report.started)
         detail = f"pid {report.pid}, port {report.port}, started {_clock(report.started)}"
-        print(f"  {green('LIVE')}  dev session active {gray(f'({detail}{", " + age if age else ""})')}")
+        print(
+            f"  {green('LIVE')}  dev session active {gray(f'({detail}{", " + age if age else ""})')}"
+        )
     else:
         headline, advice = _SESSION_LINES[report.session]
         mark = yellow("WARN") if report.session != "missing" else gray("NONE")
@@ -456,7 +459,11 @@ def to_json(report: LogReport) -> str:
                     "clean": r.clean,
                     "unconfirmed": r.unconfirmed,
                     "needsRecheck": [
-                        {"message": e.get("message"), "phase": e.get("phase"), "carried": bool(e.get("carried"))}
+                        {
+                            "message": e.get("message"),
+                            "phase": e.get("phase"),
+                            "carried": bool(e.get("carried")),
+                        }
                         for e in r.recheck
                     ],
                     "errors": [

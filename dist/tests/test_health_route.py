@@ -16,9 +16,7 @@ import main
 async def _get(path: str) -> httpx2.Response:
     # ASGITransport speaks to the app in-process; no server/socket required.
     transport = httpx2.ASGITransport(app=main.app)
-    async with httpx2.AsyncClient(
-        transport=transport, base_url="http://testserver"
-    ) as client:
+    async with httpx2.AsyncClient(transport=transport, base_url="http://testserver") as client:
         return await client.get(path)
 
 

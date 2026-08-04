@@ -3,163 +3,97 @@ from casp.component_decorator import html
 
 def page():
     return html(r"""
-<div
-  class="min-h-screen bg-background text-foreground selection:bg-primary/30 flex flex-col items-center justify-between py-8 md:py-12 px-6 md:px-24 overflow-x-hidden relative"
->
-  <div class="fixed inset-0 bg-grid -z-20 opacity-[0.15]"></div>
-  <div class="fixed inset-0 glow-conic -z-10 translate-y-[-20%]"></div>
-
-  <div
-    class="z-10 w-full max-w-5xl items-center justify-between font-mono text-sm lg:flex"
-  >
-    <p
-      class="fixed left-0 top-0 flex w-full justify-center border-b border-border bg-background/80 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto lg:rounded-xl lg:border lg:bg-muted/30 lg:p-4 lg:dark:bg-zinc-800/30"
-    >
-      Get started by editing&nbsp;
-      <code class="font-bold text-primary">src/app/index.html</code>
+<main class="flex min-h-screen flex-col justify-between gap-16 bg-background px-6 py-8 text-foreground md:px-12 md:py-12">
+  <header class="flex items-center justify-between gap-4">
+    <p class="border border-border px-4 py-2 font-mono text-xs text-muted-foreground">
+      Get started by editing
+      <code class="text-foreground">src/app/index.py</code>
     </p>
 
-    <div
-      class="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-linear-to-t from-background via-background lg:static lg:h-auto lg:w-auto lg:bg-none"
-    >
-      <a
-        href="https://github.com/TheSteelNinjaCode/create-caspian-app"
-        target="_blank"
-        rel="noreferrer"
-        class="pointer-events-auto flex place-items-center gap-2 p-8 lg:p-0 hover:text-primary transition-colors"
-      >
-        <span class="font-brand text-xs font-bold tracking-widest"
-          >BUILT WITH CASPIAN</span
-        >
+    <a class="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground transition-colors hover:text-foreground"
+       href="https://github.com/TheSteelNinjaCode/create-caspian-app"
+       target="_blank"
+       rel="noreferrer">
+      <span class="hidden sm:inline">Built with Caspian</span>
 
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
-          class="h-5 w-5"
-          fill="currentColor"
-          aria-hidden="true"
-        >
-          <path
-            d="M12 2C6.477 2 2 6.486 2 12.02c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.866-.013-1.7-2.782.605-3.369-1.343-3.369-1.343-.454-1.157-1.109-1.466-1.109-1.466-.907-.62.069-.608.069-.608 1.003.071 1.531 1.033 1.531 1.033.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.952 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.27.098-2.646 0 0 .84-.27 2.75 1.026A9.56 9.56 0 0 1 12 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.748-1.026 2.748-1.026.546 1.376.202 2.393.1 2.646.64.7 1.028 1.595 1.028 2.688 0 3.849-2.339 4.695-4.566 4.944.359.31.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.579.688.481A10.02 10.02 0 0 0 22 12.02C22 6.486 17.523 2 12 2z"
-          />
-        </svg>
-      </a>
-    </div>
-  </div>
+      <svg class="size-5"
+           xmlns="http://www.w3.org/2000/svg"
+           viewBox="0 0 24 24"
+           fill="none"
+           stroke="currentColor"
+           stroke-width="2"
+           stroke-linecap="round"
+           stroke-linejoin="round"
+           aria-hidden="true">
+        <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+        <path d="M9 18c-4.51 2-5-2-7-2" />
+      </svg>
+    </a>
+  </header>
 
-  <div
-    class="relative flex flex-col items-center justify-center gap-6 z-10 before:absolute before:h-75 before:w-120 before:-translate-x-1/2 before:rounded-full before:bg-linear-to-br before:from-transparent before:to-primary before:opacity-10 before:blur-2xl before:content-[''] before:max-w-full after:absolute after:-z-20 after:h-45 after:w-60 after:translate-x-1/3 after:bg-linear-to-t after:from-cyan-300 after:via-primary after:opacity-20 after:blur-2xl after:content-[''] after:max-w-full"
-  >
-    <div
-      class="relative flex flex-col items-center justify-center gap-6 z-10 pt-24 lg:pt-0 before:absolute before:h-75 before:w-120 before:-translate-x-1/2 before:rounded-full before:bg-linear-to-br before:from-transparent before:to-primary before:opacity-10 before:blur-2xl before:content-[''] before:max-w-full after:absolute after:-z-20 after:h-45 after:w-60 after:translate-x-1/3 after:bg-linear-to-t after:from-cyan-300 after:via-primary after:opacity-20 after:blur-2xl after:content-[''] after:max-w-full"
-    >
-      <div
-        class="relative w-24 h-24 md:w-32 md:h-32 flex items-center justify-center mb-4"
-      >
-        <img
-          src="/favicon.ico"
-          alt="caspian logo"
-          class="w-full h-full object-contain"
-        />
-      </div>
+  <div class="flex flex-col items-center text-center">
+    <img class="size-20 object-contain md:size-24"
+         src="/favicon.ico"
+         alt="Caspian" />
 
-      <h1
-        class="text-4xl md:text-6xl font-bold font-brand tracking-tight text-center"
-      >
-        CASPIAN
-      </h1>
-    </div>
-    <p
-      class="text-muted-foreground text-center max-w-[85vw] md:max-w-125 text-sm md:text-base"
-    >
-      The Native Python Framework with
-      <span class="text-[#053b69] font-medium whitespace-nowrap"
-        >PulsePoint</span
-      >
-      Reactivity.
+    <h1 class="mt-8 text-5xl font-bold tracking-[-0.04em] md:text-7xl">CASPIAN</h1>
+
+    <p class="mt-5 max-w-md text-pretty text-muted-foreground">
+      The native Python framework, with
+      <span class="text-foreground">PulsePoint</span> reactivity.
     </p>
   </div>
 
-  <div
-    class="mb-32 grid text-center lg:max-w-5xl lg:w-full lg:mb-0 grid-cols-1 md:grid-cols-2 lg:grid-cols-4 lg:text-left gap-5 md:gap-6 mt-16"
-  >
-    <a
-      href="https://caspian.tsnc.tech/docs"
-      class="group rounded-lg border border-transparent px-5 py-4 transition-all hover:border-border hover:bg-muted/20 hover:backdrop-blur-sm"
-      target="_blank"
-    >
-      <h2
-        class="mb-3 text-xl md:text-2xl font-semibold font-brand group-hover:text-primary transition-colors"
-      >
+  <nav class="grid gap-px border border-border bg-border sm:grid-cols-2 lg:grid-cols-4">
+    <a class="group bg-background p-6 transition-colors hover:bg-muted/50"
+       href="https://caspian.tsnc.tech/docs"
+       target="_blank"
+       rel="noreferrer">
+      <h2 class="flex items-center gap-2 font-semibold">
         Docs
-        <span
-          class="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none"
-          >-></span
-        >
+        <span class="transition-transform group-hover:translate-x-1 motion-reduce:transform-none">&rarr;</span>
       </h2>
-      <p class="m-0 text-sm text-muted-foreground">
-        Find in-depth information about Caspian, Prisma, and PulsePoint
-        features.
+      <p class="mt-2 text-sm leading-relaxed text-muted-foreground">
+        Everything about routing, layouts, components and PulsePoint.
       </p>
     </a>
 
-    <a
-      href="https://caspian.tsnc.tech/docs/rpc"
-      class="group rounded-lg border border-transparent px-5 py-4 transition-all hover:border-border hover:bg-muted/20 hover:backdrop-blur-sm"
-      target="_blank"
-    >
-      <h2
-        class="mb-3 text-xl md:text-2xl font-semibold font-brand group-hover:text-cyan-400 transition-colors"
-      >
+    <a class="group bg-background p-6 transition-colors hover:bg-muted/50"
+       href="https://caspian.tsnc.tech/docs/rpc"
+       target="_blank"
+       rel="noreferrer">
+      <h2 class="flex items-center gap-2 font-semibold">
         RPC
-        <span
-          class="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none"
-          >-></span
-        >
+        <span class="transition-transform group-hover:translate-x-1 motion-reduce:transform-none">&rarr;</span>
       </h2>
-      <p class="m-0 text-sm text-muted-foreground">
-        Learn how to call Python functions from HTML using Native RPC.
+      <p class="mt-2 text-sm leading-relaxed text-muted-foreground">
+        Call a Python function straight from a click, no endpoint to write.
       </p>
     </a>
 
-    <a
-      href="https://caspian.tsnc.tech/docs/database"
-      class="group rounded-lg border border-transparent px-5 py-4 transition-all hover:border-border hover:bg-muted/20 hover:backdrop-blur-sm"
-      target="_blank"
-    >
-      <h2
-        class="mb-3 text-xl md:text-2xl font-semibold font-brand group-hover:text-purple-400 transition-colors"
-      >
+    <a class="group bg-background p-6 transition-colors hover:bg-muted/50"
+       href="https://caspian.tsnc.tech/docs/database"
+       target="_blank"
+       rel="noreferrer">
+      <h2 class="flex items-center gap-2 font-semibold">
         Schema
-        <span
-          class="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none"
-          >-></span
-        >
+        <span class="transition-transform group-hover:translate-x-1 motion-reduce:transform-none">&rarr;</span>
       </h2>
-      <p class="m-0 text-sm text-muted-foreground">
-        Edit <code>schema.prisma</code> to define your data models and generate
-        type-safe clients.
+      <p class="mt-2 text-sm leading-relaxed text-muted-foreground">
+        Define your models in <code class="font-mono text-xs">schema.prisma</code> and query them with types.
       </p>
     </a>
 
-    <a
-      href="https://caspian.tsnc.tech/docs/deploy"
-      class="group rounded-lg border border-transparent px-5 py-4 transition-all hover:border-border hover:bg-muted/20 hover:backdrop-blur-sm"
-      target="_blank"
-    >
-      <h2
-        class="mb-3 text-xl md:text-2xl font-semibold font-brand group-hover:text-green-400 transition-colors"
-      >
+    <a class="group bg-background p-6 transition-colors hover:bg-muted/50"
+       href="https://caspian.tsnc.tech/docs/deploy"
+       target="_blank"
+       rel="noreferrer">
+      <h2 class="flex items-center gap-2 font-semibold">
         Deploy
-        <span
-          class="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none"
-          >-></span
-        >
+        <span class="transition-transform group-hover:translate-x-1 motion-reduce:transform-none">&rarr;</span>
       </h2>
-      <p class="m-0 text-sm text-muted-foreground">
-        Instantly deploy your native Python app to Vercel, Railway, or Docker.
-      </p>
+      <p class="mt-2 text-sm leading-relaxed text-muted-foreground">Ship your Python app to Vercel, Railway or Docker.</p>
     </a>
-  </div>
-</div>
+  </nav>
+</main>
 """)
