@@ -6,14 +6,205 @@
 
 This workspace is a Caspian application plus a packaged copy of the Caspian docs.
 
+**This file is the first-party Caspian reference and the required first read for every task — do not skip it and do not start implementing before it.** The "Caspian Core Contracts" section below is the condensed, always-read digest of how Caspian actually works — feature gates, the Jinja/PulsePoint brace dialects, the authoring model, the props-passing contract, the closed PulsePoint template/API surface, and the data flows. It exists because tasks fail when an agent implements from generic framework intuition instead of these shipped contracts; reading it first is what lets a feature land correctly in one pass. The packaged docs under `node_modules/caspian-utils/dist/docs/` remain the deep per-feature layer to open when a task touches that surface.
+
 When you work here, use `caspian.config.json` and the code that actually runs as the source of truth for this project. Use workspace file instructions under `.github/instructions/**/*.instructions.md` as the task-specific instruction layer when they match the work, and use the packaged markdown docs under `node_modules/caspian-utils/dist/docs/` as the AI-facing Caspian feature and task-reference layer.
 
 Do not treat the existence of a packaged doc as proof that the feature is enabled in this project.
 
+## Caspian Core Contracts (Read Before Any Analysis)
+
+Every rule in this section describes shipped behavior of the Caspian runtime this app runs on. Implement against these contracts, not framework intuition. When any claim here disagrees with `caspian.config.json`, the app code, or the installed runtime, the code wins — and this section should then be fixed together with the matching packaged doc.
+
+**This is the digest, not the full documentation.** It exists to stop the highest-frequency implementation failures; it does not replace the packaged docs under `node_modules/caspian-utils/dist/docs/`, which remain the canonical deep layer per feature. Each subsection below ends with a "Deep dive" pointer — open that doc before implementing anything nontrivial on that surface, and use the "Task Routing" section further down to pick the right doc for the task as a whole. Never conclude from this digest alone that a detail, option, or edge case does not exist.
+
+### Feature gates (`caspian.config.json`)
+
+This workspace currently enables: `tailwindcss`, `mcp`, `prisma`, `typescript`, `websocket`; `backendOnly: false`; components are scanned under `src/`. Re-read the file when in doubt — it is the single source of truth for optional features. A packaged doc existing never proves a feature is enabled. If a disabled feature is requested, ask first, then enable the flag and follow the Caspian update workflow.
+
+Deep dive: `node_modules/caspian-utils/dist/docs/index.md` (the docs manifest and retrieval order) and `commands.md` (scaffold and update workflows).
+
+### The three brace dialects — the #1 source of broken implementations
+
+Every template in this app is authored inside `html(r"""...""")` and rendered through Jinja **before** the PulsePoint compiler ever sees it. Three brace forms coexist and must never be confused:
+
+| Syntax                | Layer                | Meaning                                                            |
+| --------------------- | -------------------- | ------------------------------------------------------------------ |
+| `{{ value }}`         | Server (Jinja)       | Python-to-HTML interpolation at render time. Autoescaped.          |
+| `{{ value \| json }}` | Server (Jinja)       | Safe serialization of a server value into a `<script>`.            |
+| `{# comment #}`       | Server (Jinja)       | Stripped from output.                                              |
+| `{ expression }`      | Browser (PulsePoint) | Left untouched by the server; evaluated reactively in the browser. |
+
+Consequences that are always true:
+
+- **Never author markup as a Python f-string.** It inverts both dialects (`{x}` becomes server interpolation, a PulsePoint binding must become `{{x}}`), skips autoescaping while still marking the output trusted, and skips the `<x-*>` scope stash. The `html-form` gate rule fails new f-strings. The one accepted markup form is `html(r"""...""")` — raw, triple-quoted, nothing else.
+- **Autoescaping is ON.** `{{ value }}` is safe for user text. Trusted HTML needs `Markup(...)` or `| safe`. `children` is auto-safe.
+- **Braces are escaped by the server too** (`{`/`}` → `&#123;`/`&#125;` on every non-`Markup` value), because PulsePoint compiles the rendered DOM and a stored `{fetch(...)}` would otherwise execute. `Markup` is the trust boundary: `get_attributes(...)`, `merge_classes(...)`, `| safe`, the `json` filter, and layout children keep their braces live. Therefore **you cannot build a PulsePoint expression by interpolating a plain server string** — `class="{{ some_expr }}"` renders inert. Author the expression in the template, or return `Markup` from the helper.
+- Server-rendered `{{ }}` values are static after first paint; `{ }` values are reactive. Passing first-render data into reactive scripts goes through `{{ value | json }}` into a `pp.state(...)` initializer, or through props (see the props contract below).
+
+Deep dive: `node_modules/caspian-utils/dist/docs/components.md` "Single-File Components With `html(...)`" (the dialects, autoescaping, and the `Markup` trust boundary in full).
+
+### Authoring model — pages, layouts, components
+
+Authoring is **Python-only and single-file**. There are no `.html` sidecars in this app; markup lives inline in the owning `.py` file, returned from `html(r"""...""", **context)` (import `html` — and `component` — from `casp.component_decorator`).
+
+**Routes (`src/app/**/index.py`):\*\*
+
+- Folders are URL segments (Next.js App Router model): `[id]` dynamic, `[...slug]` catch-all, `(group)` organizes without a URL segment.
+- `page()` returns `html(r"""...""")` for UI routes, a `Response` for non-visual routes, or the tuple `(html(...), {"layout_prop": value})` to push a value up into wrapping layouts as `{{ layout.layout_prop }}`.
+- Path params arrive as **one positional dict**: `async def page(params: dict)`. Query params inject by name; `request` injects by keyword when declared.
+- The same `index.py` owns the route's metadata, `@rpc()` actions, auth checks, caching, redirects, and validation. Extract to `src/lib/**` only what is genuinely shared.
+- **Component-first composition is the top authoring rule**: the page template is a short assembly of `x-*` chunk components (topbar, sidebar, sections, cards, forms, footer). Long markup moves into focused components in `src/components/` _before_ the route is written, not as cleanup.
+
+**Layouts (`src/app/**/layout.py`):\*\*
+
+- `layout()` returns `html(r"""...""", **context)` — but **deferred**: `children` (the page below) does not exist yet, so `html(...)` hands back an unrendered `LayoutTemplate` and the engine renders it later with `children` / `layout` / `metadata` merged in. Those three names are engine-owned and always win over author context.
+- The layout must place its children — `<slot />` or `{{ children }}` — or it raises `LayoutChildrenError`.
+- Also accepted returns: `(html(...), props_dict)` (props become `{{ layout.* }}` for the subtree), a bare props `dict`, `None`, or a legacy raw string.
+- Deferral is keyed on the `layout()` frame only; a component or helper called from a layout still renders eagerly.
+- Grouped sections (dashboard/admin/account) = parent folder + `layout.py` + child routes, exactly like the App Router. Put `pp-reset-scroll="true"` on the content pane that should reset on child navigation; leave shell scrollers unmarked.
+
+**Components (`src/components/**/\*.py`):\*\*
+
+- One `@component` function per responsibility, markup inline via `html(r"""...""")`, PulsePoint `<script>` inside the root. Split by responsibility exactly as you would split React components — **that analogy covers decomposition and hook API only, never markup syntax** (see the PulsePoint contract below).
+- **Composition is Python-import-driven.** An `<x-*>` tag resolves from the `Component` objects imported into the module that authors the tag: `Container` → `<x-container>`, `CommandDialog` → `<x-command-dialog>`. Import every tag you write, including in pages and layouts. Same-file multi-exports are imported from that exact file. Directories that are not valid identifiers (hyphens, `(group)`) bind via `Name = importlib.import_module("src.app.some-dir.Name").Name`.
+- Resolution precedence inside a component's output: inherited ancestor components, then the module's own imports (imports win). Slot content resolves in the scope where it was **authored**, so the module writing the tag must import it.
+- A component may also be called directly as a function and interpolated with `{{ }}`; its nested tags still resolve from its own module's imports.
+- **Root shape:** default to one authored top-level element with the `<script>` inside it.
+  - A **component** with sibling top-level nodes is a _fragment_ (the `<>…</>` equivalent) — framed by a compiler comment pair, materialized as `<pp-fragment style="display: contents">`, adds no element, and is the only shape that survives inside `<tbody>`/`<tr>`/`<select>`/`<optgroup>`. **A fragment cannot receive props** — any attribute on its `<x-*>` tag (including `pp-ref`) raises `FragmentPropsError`. Never hand-write `<pp-fragment>` or `<!--pp:…-->`.
+  - A **page or layout** with sibling top-level nodes gets a layout-neutral `<div pp-component style="display: contents">` boundary host instead — legal and expected.
+  - A component whose authored root is another `x-*` tag (composition component) gets the same host, carrying the parent's forwarded props and `pp-ref-forward`. An extra `display: contents` div in rendered DOM is expected output, not a bug.
+- Never author `pp-component` or any runtime-managed attribute; the pipeline injects them.
+- A template whose root is an `x-*` tag keeps its `<script>` inside that root: it travels as slot content owned by the authoring template (`pp-owner`, alias `app` for pages/layouts) and executes in the **author's** scope.
+- Async components (`async def`) are allowed only when the component itself needs awaited I/O.
+
+Deep dive: `node_modules/caspian-utils/dist/docs/routing.md` (routes, dynamic segments, groups, layouts, layout props), `components.md` (component authoring, imports, slots, direct calls, granularity), `file-conventions.md` (`index.py`/`layout.py`/`loading.py`/`not_found.py`/`error.py`), and `project-structure.md` (placement).
+
+### Props passing — the contract that silently fails when skipped
+
+There are **two separate handoffs**, and the Python component is the deliberate bridge between them. Skipping the bridge produces no error anywhere — just `undefined` props in the browser.
+
+1. **Parent tag → Python.** Attributes on the `<x-*>` tag arrive as **raw string kwargs**, kebab-case converted to camelCase (`on-apply` → `onApply`). PulsePoint expressions are **not** evaluated: `open="{permOpen}"` arrives in Python as the literal string `"{permOpen}"`.
+2. **Python → root → `pp.props`.** The browser computes `pp.props` from the **rendered root element's attributes**, never from the Python signature. So every prop the template's `{...}` expressions read must be re-emitted on the single native root:
+
+   ```python
+   attributes = get_attributes({
+       "class": merge_classes("base-classes", props.pop("class", "")),
+       "open": open, "value": value, "onApply": onApply,   # every prop the template reads
+   }, props)                                               # **props = passthrough for the rest
+   return html(r"""
+     <section {{ attributes }} hidden="{!open}">
+       ...
+       <script>const { open, value, onApply } = pp.props;</script>
+     </section>
+   """, attributes=attributes)
+   ```
+
+   `{{ attributes }}` on the root **and** `attributes=attributes` into `html(...)` are both required. A named Python parameter is consumed out of `**props`, so it must be listed explicitly in the defaults dict or it never reaches the root.
+
+Value-type contract (forwarding fixes presence, not type):
+
+| Attribute on the rendered root                 | `pp.props.x`                                                        |
+| ---------------------------------------------- | ------------------------------------------------------------------- |
+| `volume="{vol}"` — brace expression            | real type, evaluated in the **parent's** scope                      |
+| `volume="0"` — literal from a server value     | the **string** `"0"` (`volume === 0` is false)                      |
+| valueless attribute                            | boolean `true`                                                      |
+| `class`, `for` — JS reserved words             | dropped; `pp.props.class` never exists                              |
+| value was `None`/`False`/`""`/empty collection | attribute omitted by `get_attributes` → `undefined` (never `false`) |
+
+Design rules: read booleans defensively (`!!pp.props.playing`); coerce server literals before strict comparison; avoid native-attribute collisions (`title` makes a tooltip — prefer `user-name`); camelCase round-trips through kebab-case (`isFullscreen` ↔ `is-fullscreen`). `get_attributes` aliases: `className`/`class_name` → `class`, `htmlFor`/`html_for` → `for`, `defaultValue` → `defaultvalue`, `defaultChecked` → `defaultchecked`. When Tailwind is enabled, `merge_classes(...)` emits a live `{twMerge(...)}` expression — pass it straight through, never wrap or re-merge it, and pop the incoming `class` from `props` first.
+
+`pp-ref` on an `x-*` tag is parent-owned and binds the component's concrete DOM root (forwarded through composition hosts). A component can opt out by declaring an explicit `ppRef` parameter. For a child-defined imperative API, pass a parent ref as an ordinary prop and publish with `pp.imperativeHandle(pp.props.controlRef, () => ({...}), [])` — never author `pp-ref-forward`.
+
+Deep dive: `node_modules/caspian-utils/dist/docs/components.md` "Receiving Props In A Python Component", "Every Prop A Template Reads Must Be Forwarded To The Root", and "HTML Attribute Helper Contract" (the full `get_attributes`/`merge_classes` behavior and end-to-end examples).
+
+### PulsePoint templates — plain HTML, never JSX
+
+The React comparison covers exactly two things: the `pp.*` hook API inside `<script>` and how components are split by responsibility. **The markup is plain HTML parsed by an HTML parser.** The one-line test before finishing any template: _would it still be valid HTML with every `{}` deleted?_
+
+Fatal JSX constructs and their PulsePoint forms:
+
+| Never write                                       | Write instead                                                                                                                                             |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{cond && (<div/>)}` / `{cond ? <A/> : <B/>}`     | `<div hidden="{!cond}">…</div>` (element stays, guard inner expressions with `?.`)                                                                        |
+| `{list.map(item => (<li/>))}`                     | `<template pp-for="item in list"><li key="{item.id}">…</li></template>`                                                                                   |
+| `class={expr}` — unquoted brace attribute         | `class="{expr}"` — **always quote**. Unquoted is invalid HTML: the parser shreds the element and the route serves a **blank page with no console error**. |
+| `className`, `htmlFor`, `onClick`, `defaultValue` | `class`, `for`, `onclick`, `defaultvalue` (lowercase HTML)                                                                                                |
+| `style={{color:'red'}}`                           | `pp-style="{styleText}"` — a CSS **string**                                                                                                               |
+| `<>…</>`                                          | one real root; or plain siblings (fragment rules above)                                                                                                   |
+| `dangerouslySetInnerHTML`                         | server-render trusted HTML                                                                                                                                |
+
+**The directive list is closed.** All of it: `{expr}` in text/quoted attributes; native `on*` event attributes; `pp-for` (on `<template>` only, forms `item in items` / `(item, index) in items`, plain `key` on the repeated element); `pp-ref`; `defaultvalue`/`defaultchecked` (lowercase, uncontrolled seed); `pp-style`; `pp-spread="{...obj}"`; `<token.provider value="{v}">` (lowercase context provider); `pp-spa="false"`; `pp-reset-scroll`; `pp-scroll-key`; `pp-loading-content`; `pp-loading-url`; `pp-loading-transition`. There is **no** `pp-if`, `pp-show`, `pp-else`, `pp-model`, `pp-bind`, `pp-class`, `pp-key`, or `pp-context`. If it is not in `public/js/pp-reactive-v2.min.js`, it does not exist.
+
+Runtime-managed, never authored: `pp-component`, `pp-owner`, `pp-event-owner`, `pp-ref-forward`, `<pp-context-provider>`, `data-pp-*`, `pp-keep`, `pp-keep-run`, `pp-keep-content`.
+
+Rendering semantics worth knowing before debugging a "blank binding":
+
+- Interpolations produce **text, never elements**, HTML-escaped, serialized with JSX-child rules: `true`/`false`/`null`/`undefined`/`""` render nothing; `0` and `NaN` print; arrays concatenate with no separator; objects/functions warn (`[PP-WARN] Invalid template child`) and render nothing. So `{items.length && 'x'}` leaks a `0` — write a ternary; bind display expressions (`{admin ? 'yes' : 'no'}`) when a value can be boolean/nullish.
+- On non-boolean attributes, booleans serialize as `"true"`/`"false"` (correct for `aria-*`/`data-*`), and **nullish leaves the attribute present-but-empty** — guard URL attributes: `src="{avatar ? avatar : placeholder}"` (an empty `src` refetches the page).
+- Form controls are controlled (`value="{state}"` + `oninput`) **or** uncontrolled (`defaultvalue="{expr}"`) for their lifetime. Binding `value` to state that starts `undefined` flips the mode and logs `[PP-WARN] … changed from uncontrolled to controlled` — fix the initial state, never add both attributes.
+- `{...}` is safe in **any** attribute or position (SVG `d`/`viewBox`, `src`/`href`, date/number inputs, text in `<table>`/`<select>`) because the server defers each component root inside an inert `<template>`. Never add per-tag workarounds (hidden-gated `<img src>`, `data-*` URL holders, SSR-resolved initial values) to dodge first-paint validation.
+- Event handlers get injected identifiers: `event`, `e`, `$event`, `target`, `currentTarget`, `el`. Lowercase `on*` = native DOM events; kebab-case attributes (`on-open-change`) = component props (`pp.props.onOpenChange`) — the `on-` prefix is convention, not magic.
+- **A handler in slot content runs in the scope of the template that authored the markup**, not the component it renders inside. `ReferenceError: fn is not defined` from a handler that fired means the function lives in the wrong template's script — move the function to the authoring template (its script can stay inside the `x-*` root as slot content) or move the markup into the child. Wrapping in another component or blaming portals does not fix it.
+
+Deep dive: `node_modules/caspian-utils/dist/docs/pulsepoint.md` "PulsePoint Is Not JSX", "Complete Directive And API Surface", "Conditional rendering", "Value serialization is the JSX child contract", and "A slot-authored `<script>` belongs to the template that authored it".
+
+### Component scripts — hooks and runtime API
+
+The script is a plain, untyped `<script>` inside the root: captured by the runtime before materialization, evaluated in component scope via `new Function(...)`. No `import`/`export`/top-level `await`. Only **top-level** declarations reach the template (functions, `const`s, every destructuring shape). Props are read via `pp.props` — there is no injected `props` variable.
+
+Hooks (closed list): `pp.state`, `pp.effect`, `pp.layoutEffect`, `pp.ref`, `pp.memo`, `pp.callback`, `pp.reducer`, `pp.context`, `pp.portal`, `pp.id`, `pp.errorBoundary`, `pp.syncExternalStore`, `pp.imperativeHandle`, `pp.transition`, `pp.deferredValue`, `pp.optimistic`, plus `pp.props`. Utilities: `pp.createContext`, `pp.mount`, `pp.redirect`, `pp.rpc`, `pp.socket`, `pp.enablePerf`/`disablePerf`/`getPerfStats`/`resetPerfStats`. No `forwardRef`, `Suspense`, `lazy`, `useActionState`, or `pp.provideContext` — do not invent hooks.
+
+Contracts:
+
+- Effects return synchronous cleanups only (promises are ignored with a warning). Always pass a dependency array; deps compare by identity, so memoize object/function deps first.
+- `pp.id()` for generated `id`/`for`/`aria-*` — never index- or counter-derived ids.
+- `pp.syncExternalStore` needs a `pp.callback(..., [])`-stable subscribe.
+- `pp.transition()` gives an accurate `isPending` but does **not** time-slice; PulsePoint renders synchronously.
+- `pp.errorBoundary()` catches render/effect/cleanup throws (including its own), latches until `reset()`, gives up after five unreset captures; event-handler errors need `try`/`catch`.
+- Context: `pp.createContext(default)` → lowercase `<themecontext.provider value="{theme}">` in markup → `pp.context(token)` in descendants. Share the token via props when scopes differ. Resolution walks component ancestry (portals included), not the DOM.
+
+Performance ownership (the render contract):
+
+- `pp.state` = "render required". Timers, request generations, cursors, and RPC-only query text go in `pp.ref` — a ref mutation never renders. Debouncing a setter limits frequency, not render cost: for server search, keep the query in a ref, debounce the RPC, discard stale responses with a generation check, and put only accepted rows in state.
+- Keep high-frequency state in the smallest owning component; `pp.deferredValue` for consumers that may lag one commit.
+- **Prop identity decides child re-renders** (shallow, by identity). Inline `rows="{list.filter(...)}"` or `on-select="{(r) => ...}"` re-renders the child every parent render — memoize arrays/objects with `pp.memo`, handlers with `pp.callback`, and pass those names. Primitives are free. Provider `value` objects must be memoized too, or every consumer re-renders each provider render.
+- Key every `pp-for` row, keep the row body single-rooted, and the runtime reuses unchanged rows; a mounted child boundary is reconciled by its attributes, not its markup.
+- Never "fix" performance with `querySelector`/`addEventListener`/`innerHTML` — diagnose ownership first, then `pp.enablePerf()` if byte-identical output still costs.
+
+Interaction rules: bind first-party events with `on*` in the markup; ordinary forms use `onsubmit="{handler(event)}"` + `Object.fromEntries(new FormData(event.currentTarget).entries())` (input `name`s define the payload; Python validates) — never per-input `pp-ref` collection, never id/`data-*`-driven DOM wiring, never manual `innerHTML` list painting. Imperative DOM access (focus, measurement, media, third-party widgets) stays behind `pp.ref` + `pp.effect` inside the owning component.
+
+Deep dive: `node_modules/caspian-utils/dist/docs/pulsepoint.md` "Hooks and runtime API", "High-performance authoring", "Context", "Error boundaries", and "SPA, loading, and navigation helpers"; `pulsepoint-runtime-map.md` for the fastest feature-to-owner lookup.
+
+### Data — first render, RPC, streaming, uploads
+
+- **First render:** load in `page()` (async when I/O-bound), pass into `html(...)` as context, render with `{{ }}`. Shared subtree data goes in `layout()` props.
+- **Everything browser-triggered after that is RPC:** Python `@rpc()` (route-owned in the route's `index.py`; component RPC names are global) called via `pp.rpc(name, data?, options?)`. Never raw `fetch` to hand-made JSON endpoints.
+- `@rpc(require_auth=True, allowed_roles=[...], limits="20/minute")` for protection. **Payload keys are filtered against the signature** — a parameter is client-settable only when declared; identity/ownership/privilege must be derived server-side (`auth.get_payload()`), never accepted as an argument. `**kwargs` opts into the whole payload — only deliberately.
+- Options: `abortPrevious` (cancelled promise resolves `{ cancelled: true }`), `url`, `csrfUrl`, `credentials`, `onStream`, `onStreamError`, `onStreamComplete`, `onUploadProgress` (`{ loaded, total, percent }` — no `percentage`), `onUploadComplete`.
+- **Streaming (the default for AI/LLM/chat tokens):** a generator `@rpc()` that `yield`s chunks (bridge an SDK stream with `async for ... yield`); consume with `pp.rpc(..., { onStream })` appending to state. Never `EventSource`, raw `ReadableStream`, or a WebSocket for one-way streams.
+- **Uploads:** a payload containing `File`/`FileList` becomes multipart (non-file fields sent first; objects JSON-stringified; nullish omitted). Upload/delete actions live in the owning route's `index.py`; blobs under `public/uploads/**` (attachment-mode protected); metadata in Prisma; list UI via `pp.state` + `pp-for`.
+- Server-push-only? RPC streaming. Genuinely bidirectional? Named sockets (see the workspace clarifications below).
+
+Deep dive: `node_modules/caspian-utils/dist/docs/fetch-data.md` (first-render data, RPC, "Search, Filters, And Request Races", "Streaming Responses", serialization), `file-uploads.md` (the complete file-manager pattern), and `websockets.md` "Named Sockets".
+
+### Server utilities
+
+- **Validation** (`casp.validate`): `Validate.email/url/string/boolean/decimal/date/...` for single-value coercion (`Validate.string` trims + HTML-escapes by default); `Validate.with_rules(value, [Rule...], confirmation_value=None)` for multi-constraint form and RPC payloads. Validate every mutation payload in Python.
+- **Metadata** (`casp.layout.Metadata`): static `metadata = Metadata(title=..., description=..., extra={"og:title": ...})` at module scope; dynamic `Metadata(...)` inside `page()` overrides it. Inheritance: root layout → nested layouts → route (route wins per field). Layouts read resolved values as `{{ metadata.* }}`.
+- **Cache** (`casp.cache_handler`): `cache_settings = Cache(ttl=3600, enabled=True)` at module scope in a route's `index.py` (explicit assignment preferred). Public shareable HTML only — `CacheHandler` keys on URI alone and `main.py` refuses to cache authenticated renders. Invalidate after writes with `CacheHandler.invalidate_by_uri(...)`.
+- **StateManager** (`casp.state_manager`): transient request-scoped server state (`get_state`/`set_state`/`reset_state`/`subscribe`) — flash-style messages, not a session store, not browser state. Do not assume cross-request persistence unless `request.state.session` is bridged.
+- **Time** (`casp.app_time`): never bare `datetime.now()` in `src/**`/`main.py` — use `app_time.now()`/`today()`, `to_app_time(...)` for display, `day_bounds_utc(...)` with `gte`/`lt` for calendar-day queries. Session expiry and cache TTLs stay UTC.
+
+Deep dive: `node_modules/caspian-utils/dist/docs/validation.md`, `metadata.md`, `cache.md`, `state.md`, `auth.md`, `database.md`, and `core-runtime-map.md` (which `casp` module owns which behavior, including `casp.app_time`).
+
+The workspace-specific layers — the quality gate (`npm run check`), browser log (`npm run logs`), formatter, named sockets, auth, Prisma workflow, security invariants, and static export — are covered in the "Workspace Clarifications" and "Task Routing" sections below, and remain part of the required contract.
+
 ## Document Ownership
 
 - Keep repo-wide always-on rules in `.github/copilot-instructions.md`.
-- Keep this file focused on decision order, task routing, workspace-specific clarifications, and packaged-doc maintenance.
+- Keep the "Caspian Core Contracts" section above as the first-party implementation-contract digest: the condensed, always-read version of what the packaged docs explain in depth (brace dialects, authoring model, props passing, PulsePoint surface, data flows). It is version-controlled and survives `node_modules` reinstalls, so when runtime behavior changes, update it together with the matching packaged doc.
+- Keep the rest of this file focused on decision order, task routing, workspace-specific clarifications, and packaged-doc maintenance.
 - Keep packaged docs under `node_modules/caspian-utils/dist/docs/` framework-oriented and use `core-runtime-map.md` when those docs need to point AI back to `main.py` or the installed `casp` runtime.
 - **Only the built runtime under `public/js/**`exists in a generated Caspian app.** Whatever this workspace uses to produce it is a local build detail, not part of the product: never document it, reference it, or route AI to it from the packaged docs. Describe the runtime by its *behavior contract* — what the shipped runtime does — and treat `public/js/pp-reactive-v2.min.js` — the single minified PulsePoint bundle the app serves — as the artifact under discussion. Per-subsystem build output and any authoring source tree are development-only: never cite them as the runtime. The same rule applies to this workspace's own quality tooling and any performance measurement setup: they are development-only and never appear in packaged docs.
 - `node_modules/` is not version-controlled, so every packaged-doc edit must also be ported into the `caspian-utils` package source or the next reinstall wipes it.
@@ -22,6 +213,8 @@ Do not treat the existence of a packaged doc as proof that the feature is enable
 
 Use this order depending on the question being answered:
 
+0. First-party Caspian implementation contracts, read before any analysis
+   - the "Caspian Core Contracts" section at the top of this file
 1. Optional feature enablement and generated surface area
    - `caspian.config.json`
 2. App runtime and app-owned code for current project behavior
@@ -90,7 +283,7 @@ Use `.github/copilot-instructions.md` for the repo-wide implementation rules. Th
 - **A child whose props did not change is not re-walked.** `refreshPropsFromParent` only re-runs `bootstrapNestedComponents()` when the child produced nested runtime structure in its own last render (`hadNestedRuntimeStructures`, the same condition `render()` uses). For a leaf component — every card in a shell — the pass traversed nothing, rebuilt an empty provider set and collected an always-empty descendant list, once per child per parent render.
 - **Every per-render capture store mints ids from a sequence that restarts at zero each render** (the `ppref_`, `ppinput_`, `ppselect_`, `ppchecked_`, `ppcontext*_`, `ppdefault*_` and `ppv_` families), so unchanged markup re-renders to an identical string. Do not give any of them a globally increasing counter: the loop capture store used to, which made every row carrying a per-row handler byte-different on every render and defeated both the byte-identical render skip and per-row reuse. These ids are also lifted out of event-handler source so all rows of one loop share a single compiled handler function — if an id format changes, the matching extraction must change with it, or every row compiles and caches its own handler.
 - When `caspian.config.json` has `websocket: true`, socket behavior is app-owned: the single named-socket endpoint is wired in `main.py` and the layer lives in `src/lib/websocket/**`. Routes do not pass `websocket_path`/`websocket_url` into templates — `pp.socket(...)` already knows the shared endpoint; a route only names its `@socket()` function.
-- **Named sockets are this workspace's preferred live-channel layer.** `src/lib/websocket/sockets.py` is the server half of `pp.socket(...)`: `@socket()` registers an async function by its own name (application-wide, duplicate names refused at registration), every connection lands on the single `SOCKET_PATH` endpoint (`/__pulsepoint/ws` — named for the PulsePoint runtime so every backend serving `pp.socket` uses the same path; wired in `main.py`, gated on `websocket: true`), the arguments arrive as the first frame (one JSON object, filtered against the handler signature like rpc payloads), and failure travels as an `{"error": "..."}` frame followed by a close. The handler declares a `socket` parameter (`Socket`: `recv`/`recv_text`/`send`/`sender`/`close`); `socket.sender()` + `SocketPool` is the broadcast pattern (see `src/app/chat/`). `@socket(require_auth=True, allowed_roles=[...])` delegates to `Auth`; the endpoint keeps the origin check, connection cap, message-size limit, per-connection rate, and idle timeout (outbound traffic counts as liveness). A socket in a route's `index.py` registers when the route first renders; shared sockets live in `src/lib/**`. The browser default path lives in `ts/SocketClient.ts` (`DEFAULT_PATH`) — change it together with `SOCKET_PATH`. This is the only socket layer: hand-written `@app.websocket(...)` + native `WebSocket` is reserved for wires the JSON-frame contract cannot carry (binary, non-JSON protocols) and must run the same origin check and `Auth` delegation itself. Read `node_modules/caspian-utils/dist/docs/websockets.md` "Named Sockets"; tests in `tests/test_socket.py`.
+- **Named sockets are this workspace's preferred live-channel layer.** `src/lib/websocket/sockets.py` is the server half of `pp.socket(...)`: `@socket()` registers an async function by its own name (application-wide, duplicate names refused at registration), every connection lands on the single `SOCKET_PATH` endpoint (`/__pulsepoint/ws` — named for the PulsePoint runtime so every backend serving `pp.socket` uses the same path; wired in `main.py`, gated on `websocket: true`), the arguments arrive as the first frame (one JSON object, filtered against the handler signature like rpc payloads), and failure travels as an `{"error": "..."}` frame followed by a close. The handler declares a `socket` parameter (`Socket`: `recv`/`recv_text`/`send`/`sender`/`close`); `socket.sender()` + `SocketPool` is the broadcast pattern (see `src/app/chat/`). `@socket(require_auth=True, allowed_roles=[...])` delegates to `Auth`; the endpoint keeps the origin check, connection cap, message-size limit, per-connection rate, and idle timeout (outbound traffic counts as liveness). A socket in a route's `index.py` registers when the route first renders; shared sockets live in `src/lib/**`. The shipped browser runtime (`public/js/pp-reactive-v2.min.js`) connects `pp.socket(...)` to that same default path, so treat `SOCKET_PATH` as fixed unless the served runtime's default changes with it. This is the only socket layer: hand-written `@app.websocket(...)` + native `WebSocket` is reserved for wires the JSON-frame contract cannot carry (binary, non-JSON protocols) and must run the same origin check and `Auth` delegation itself. Read `node_modules/caspian-utils/dist/docs/websockets.md` "Named Sockets"; tests in `tests/test_socket.py`.
 - Socket auth policy is per socket, not per endpoint: `@socket()` is public, `@socket(require_auth=True)` needs a session, `@socket(allowed_roles=[...])` adds RBAC — all delegating to Caspian's `Auth` (`Auth.set_request(websocket)` plus `is_authenticated`/`get_payload`/`check_role`) inside `sockets.py`. **The old public/private channel layer is gone**: there are no `/ws/live` / `/ws/public` endpoints, no `authorize_websocket(...)` guard, and no `WebSocketConnectionManager` pools — do not reintroduce them or write per-endpoint session parsing. Keep authenticated and guest traffic in separate `SocketPool`s, and treat the socket session as read-only (mutations are not persisted to the cookie over a WebSocket).
 - For socket clients, use `pp.socket(name, args, handlers)` inside the owning component script: open it in `pp.effect(..., [])`, keep the handle in `pp.ref(...)`, close it in the effect cleanup. Reach for a native `new WebSocket(...)` only for a wire the named-socket contract cannot carry (binary frames, non-JSON protocols).
 - Before changing socket security, verify the running code in `src/lib/websocket/sockets.py` — it owns the whole surface: origin allow-list, `MAX_WEBSOCKET_CONNECTIONS`, auth delegation, idle timeout with outbound-liveness, message-size limit, per-connection message rate, and the error-frame-then-close behavior. HTTP route privacy and `AuthMiddleware` do not by themselves protect WebSocket scopes: the HTTP middleware stack early-returns on `scope["type"] == "websocket"`, so only `SessionMiddleware` runs and the socket endpoint authorizes each connection itself.
@@ -186,6 +379,7 @@ Before merging doc or runtime changes:
 
 1. Compare the claim or behavior against `main.py`, `src/lib/**`, and `.venv/Lib/site-packages/casp/**`.
 2. Update the matching packaged doc in `node_modules/caspian-utils/dist/docs/` if the running behavior changed.
-3. Update `.github/copilot-instructions.md` if the repo-wide implementation rules changed.
-4. Update this file if the decision order, task routing, workspace clarifications, or packaged-doc maintenance rules changed.
+3. Update the "Caspian Core Contracts" section in this file if a contract it states changed (brace dialects, authoring model, props passing, PulsePoint surface, data flows, server utilities).
+4. Update `.github/copilot-instructions.md` if the repo-wide implementation rules changed.
+5. Update this file if the decision order, task routing, workspace clarifications, or packaged-doc maintenance rules changed.
 <!-- caspian:end -->
