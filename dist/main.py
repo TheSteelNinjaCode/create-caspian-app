@@ -27,6 +27,7 @@ from fastapi.responses import (
     RedirectResponse,
     HTMLResponse,
     JSONResponse,
+    PlainTextResponse,
 )
 from starlette.datastructures import MutableHeaders
 from starlette.middleware import Middleware
@@ -470,6 +471,54 @@ class SecurityHeadersMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
+
+
+# Top-level directories under `public/` are asset namespaces, not page routes:
+# `public/js/**` owns `/js/**` and nothing in `src/app/` can answer there. Built
+# once, like SECURITY_HEADERS -- adding a new asset *directory* is a restart-level
+# change, unlike adding a file to an existing one, which stays live.
+PUBLIC_ASSET_NAMESPACES: frozenset[str] = (
+    frozenset(entry.name.casefold() for entry in Path("public").iterdir() if entry.is_dir())
+    if Path("public").is_dir()
+    else frozenset()
+)
+
+
+class MissingPublicAssetMiddleware:
+    """404 a missing file in a public asset namespace instead of falling through.
+
+    `PublicFilesMiddleware` deliberately falls through when no file matches, so
+    normal routing keeps working. With `is_all_routes_private=True` that means a
+    missing asset reaches `AuthMiddleware` and answers `303 -> /signin`, which is
+    the wrong answer twice over: a `<script src="/js/typo.js">` then receives the
+    sign-in *page* as `200 text/html` and fails with a parse error that names the
+    wrong file, and every bogus asset path returns a full HTML page to anonymous
+    traffic. A path whose first segment is a real `public/` directory can only be
+    an asset request, so a miss there is a genuine 404.
+
+    Runs inside the rate limiter -- a 404 flood is still a flood -- but outside
+    sessions, CSRF, and auth, so a missing asset costs no session decryption.
+    """
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http" or scope.get("method", "GET").upper() not in {
+            "GET",
+            "HEAD",
+        }:
+            await self.app(scope, receive, send)
+            return
+
+        segment = str(scope.get("path", "")).lstrip("/").split("/", 1)[0].casefold()
+        if segment not in PUBLIC_ASSET_NAMESPACES:
+            await self.app(scope, receive, send)
+            return
+
+        # PublicFilesMiddleware sits outside this one, so reaching here means it
+        # already declined: the file does not exist or escapes the public root.
+        await PlainTextResponse("Not Found", status_code=404)(scope, receive, send)
 
 
 class BodySizeLimitMiddleware:
@@ -1534,6 +1583,9 @@ app.add_middleware(
     path="/",
 )
 app.add_middleware(BodySizeLimitMiddleware)
+# Sits between the limiter and the session/auth layers: a miss under a public
+# asset namespace is a 404, not a sign-in redirect, and costs no session work.
+app.add_middleware(MissingPublicAssetMiddleware)
 # Outermost of the security layers: reject flooding before any session
 # decryption, template rendering, or database work is spent on the request.
 app.add_middleware(RateLimitMiddleware)

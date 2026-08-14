@@ -90,7 +90,17 @@ RULES: list[Rule] = [
     Rule(
         "unquoted-brace-attr",
         # `class={...}` / `selected={...}` -- invalid HTML, silently blanks the page.
-        re.compile(r"\s[\w:.\-]+=\{"),
+        #
+        # An attribute only exists *inside an opening tag*, and the rule must say
+        # so. A bare `\s[\w:.\-]+=\{` also matches `DIR={path}` in a shell script
+        # and `ENV PORT={port}` in a Dockerfile -- and this repo embeds both in
+        # triple-quoted strings under `src/lib/aws/`, which the Python scan keeps
+        # because it cannot tell a heredoc from a template. Requiring the opening
+        # tag is not a loosening: a real violation is always inside one.
+        #
+        # `[^<>]*?` bounds the attribute run to a single tag; it matches newlines
+        # (negated classes do), so an attribute on its own line is still caught.
+        re.compile(r"<[a-zA-Z][\w:.\-]*(?:[^<>]*?)?\s[\w:.\-]+=\{"),
         "Unquoted brace attribute. This is invalid HTML: the parser splits the "
         "value on spaces, the component root never compiles, and the page "
         'renders blank with no console error. Quote it: attr="{expr}".',
@@ -116,7 +126,12 @@ RULES: list[Rule] = [
     ),
     Rule(
         "jsx-fragment",
-        re.compile(r"<>|</>"),
+        # `</>` is unambiguous, and a well-formed fragment always has one. A bare
+        # `<>` is not: it is SQL's not-equals operator, and this repo runs
+        # `WHERE pid <> pg_backend_pid()` from a triple-quoted string. So the
+        # open tag counts only when an element follows it, which is what a
+        # fragment looks like and what `<> value` in SQL never does.
+        re.compile(r"</>|<>\s*<"),
         "JSX fragment. A template needs exactly one real root element.",
     ),
     Rule(
