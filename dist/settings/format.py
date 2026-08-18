@@ -53,6 +53,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 import _markup_equivalence as eq
@@ -345,6 +346,20 @@ def render_literal(block: Block, markup: str) -> str | None:
     return f"{block.prefix}{body}{block.quote}"
 
 
+@lru_cache(maxsize=None)
+def jinja_classes(path: Path) -> dict:
+    """Class lists this file hides behind an expression.
+
+    Recovered from the file's own source so the oracle can see the display of a
+    root written as `<div {{ attributes }}>` or `class="{helper()}"`. Cached
+    because every block in a file shares one answer.
+    """
+    try:
+        return eq.class_hints(path.read_text(encoding="utf-8"))
+    except OSError:
+        return {}
+
+
 @dataclass
 class Skip:
     path: str
@@ -402,7 +417,7 @@ def format_markup_blocks(*, write: bool) -> MarkupReport:
         if formatted.strip("\n") == block.source.strip("\n"):
             report.already += 1
             continue
-        same, why = eq.equivalent(block.source, formatted)
+        same, why = eq.equivalent(block.source, formatted, jinja_classes(path))
         if not same:
             report.skips.append(Skip(rel, block.lineno, why))
             continue
