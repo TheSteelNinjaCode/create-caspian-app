@@ -20,21 +20,9 @@ def page(error_message: str, error_trace: Optional[str] = None):
            fill="none"
            xmlns="http://www.w3.org/2000/svg"
            aria-hidden="true">
-        <path d="M11.001 2a1 1 0 0 1 .998 0L21 7v9a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V7l8.001-5z"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-              stroke-linejoin="round" />
-        <path d="M12 8v4"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-              stroke-linejoin="round" />
-        <path d="M12 16h.01"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-              stroke-linejoin="round" />
+        <path d="M11.001 2a1 1 0 0 1 .998 0L21 7v9a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V7l8.001-5z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+        <path d="M12 8v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+        <path d="M12 16h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
 
       <div class="flex-1">
@@ -51,37 +39,29 @@ def page(error_message: str, error_trace: Optional[str] = None):
             Home
           </a>
           <button class="inline-block rounded bg-blue-600 px-3 py-1.5 text-sm text-white"
-                  onclick="window.location.reload()">
-            Reload
-          </button>
+                  onclick="window.location.reload()">Reload</button>
           {% if error_trace %}
-          <button class="inline-block rounded border border-gray-200 bg-transparent px-3 py-1.5 text-sm text-black"
-                  onclick="setShowTrace(current => !current)">
-            {showTrace ? "Hide details" : "Show details"}
-          </button>
+            <button class="inline-block rounded border border-gray-200 bg-transparent px-3 py-1.5 text-sm text-black"
+                    onclick="setShowTrace(current => !current)">{showTrace ? "Hide details" : "Show details"}</button>
           {% endif %}
         </div>
       </div>
     </div>
 
     {% if error_trace %}
-    <section class="mt-4" hidden="{!showTrace}">
-      <div class="mb-2 flex items-center justify-between">
-        <div class="text-xs text-gray-500">Error details (development only)</div>
-        <div class="flex gap-2">
-          <button class="rounded border bg-gray-100 px-2 py-1 text-xs text-black"
-                  onclick="copyTrace()">
-            {traceCopied ? "Copied" : "Copy"}
-          </button>
-          <button class="rounded border bg-gray-100 px-2 py-1 text-xs text-black"
-                  onclick="downloadTrace()">
-            Download
-          </button>
+      <section class="mt-4" hidden="{!showTrace}">
+        <div class="mb-2 flex items-center justify-between">
+          <div class="text-xs text-gray-500">Error details (development only)</div>
+          <div class="flex gap-2">
+            <button class="rounded border bg-gray-100 px-2 py-1 text-xs text-black"
+                    onclick="copyTrace()">{traceCopied ? "Copied" : "Copy"}</button>
+            <button class="rounded border bg-gray-100 px-2 py-1 text-xs text-black"
+                    onclick="downloadTrace()">Download</button>
+          </div>
         </div>
-      </div>
-      <pre pp-ref="{tracePre}"
-           class="overflow-auto rounded bg-gray-100 p-4 text-xs text-black">{{ error_trace }}</pre>
-    </section>
+        <pre pp-ref="{tracePre}"
+             class="overflow-auto rounded bg-gray-100 p-4 text-xs text-black">{{ error_trace }}</pre>
+      </section>
     {% endif %}
 
     <script>
@@ -109,4 +89,7 @@ def page(error_message: str, error_trace: Optional[str] = None):
     </script>
   </div>
 </main>
-""", error_message=error_message, error_trace=error_trace)
+""",
+        error_message=error_message,
+        error_trace=error_trace,
+    )

@@ -123,9 +123,7 @@ def _rate_window_seconds() -> int:
 # Ceiling on simultaneous open sockets. Every open connection is a live task
 # plus a broadcast target, so an unbounded count lets cheap clients grow
 # server memory and turn each broadcast into an amplification.
-MAX_WEBSOCKET_CONNECTIONS = max(
-    1, int(os.getenv("MAX_WEBSOCKET_CONNECTIONS", 200))
-)
+MAX_WEBSOCKET_CONNECTIONS = max(1, int(os.getenv("MAX_WEBSOCKET_CONNECTIONS", 200)))
 
 
 def _is_production() -> bool:
@@ -147,11 +145,7 @@ def _configured_websocket_origins() -> set[str]:
     ):
         raw_values.extend(os.getenv(env_name, "").split(","))
 
-    return {
-        _normalized_origin(origin)
-        for origin in raw_values
-        if _normalized_origin(origin)
-    }
+    return {_normalized_origin(origin) for origin in raw_values if _normalized_origin(origin)}
 
 
 def _websocket_same_origin(websocket: WebSocket) -> str:
@@ -208,8 +202,7 @@ class SocketEntry:
 SOCKET_REGISTRY: dict[str, SocketEntry] = {}
 
 
-def socket(require_auth: bool = False,
-           allowed_roles: list[str] | None = None):
+def socket(require_auth: bool = False, allowed_roles: list[str] | None = None):
     """Register an async function as a named socket.
 
     The function's own name is the name the browser connects with, so it must
@@ -309,9 +302,7 @@ class _Shared:
     """State the `Socket` and every cloned `SocketSender` see together."""
 
     def __init__(self) -> None:
-        self.outgoing: asyncio.Queue[str | None] = asyncio.Queue(
-            maxsize=SEND_QUEUE_SIZE
-        )
+        self.outgoing: asyncio.Queue[str | None] = asyncio.Queue(maxsize=SEND_QUEUE_SIZE)
         self.closed = False
         self.last_activity = time.monotonic()
 
@@ -452,8 +443,7 @@ class Socket:
             return json.loads(text)
         except json.JSONDecodeError as e:
             raise ValueError(
-                f"`{self._name}` could not read a frame -- {e}. Each frame is "
-                "one JSON value."
+                f"`{self._name}` could not read a frame -- {e}. Each frame is one JSON value."
             ) from e
 
     async def recv_text(self) -> str | None:
@@ -467,9 +457,7 @@ class Socket:
         idle_timeout = _idle_timeout_seconds()
         while not self._shared.closed:
             try:
-                text = await asyncio.wait_for(
-                    self._websocket.receive_text(), timeout=idle_timeout
-                )
+                text = await asyncio.wait_for(self._websocket.receive_text(), timeout=idle_timeout)
             except asyncio.TimeoutError:
                 # Outbound traffic counts as liveness: a passive listener in
                 # an active room is not idle, it is listening.
@@ -520,7 +508,7 @@ class Socket:
         """Let queued frames drain, then reclaim the writer task."""
         try:
             await asyncio.wait_for(self._writer, timeout=5)
-        except (asyncio.CancelledError, Exception):
+        except asyncio.CancelledError, Exception:
             self._writer.cancel()
         self._shared.closed = True
 
@@ -574,9 +562,7 @@ def _authorize(websocket: WebSocket, entry: SocketEntry) -> _Refusal | None:
 
     if auth.is_authenticated():
         payload = auth.get_payload() or {}
-        if entry.allowed_roles and not auth.check_role(
-            payload, list(entry.allowed_roles)
-        ):
+        if entry.allowed_roles and not auth.check_role(payload, list(entry.allowed_roles)):
             return _Refusal(f"The socket `{entry.name}` is not available to this account.")
         return None
 
@@ -596,9 +582,7 @@ async def _first_frame(websocket: WebSocket) -> dict[str, Any] | _Refusal | None
     mid-handshake. Not an error, and nobody left to tell.
     """
     try:
-        text = await asyncio.wait_for(
-            websocket.receive_text(), timeout=ARGS_TIMEOUT_SECONDS
-        )
+        text = await asyncio.wait_for(websocket.receive_text(), timeout=ARGS_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
         return _Refusal(
             "This socket opened and sent no arguments. The first frame is the "
@@ -631,14 +615,13 @@ def _call_kwargs(
     from the wire.
     """
     parameters = inspect.signature(entry.handler).parameters.values()
-    accepts_kwargs = any(
-        p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters
-    )
+    accepts_kwargs = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters)
 
     accepted = {
         p.name
         for p in parameters
-        if p.kind in (
+        if p.kind
+        in (
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
             inspect.Parameter.KEYWORD_ONLY,
         )
@@ -647,15 +630,13 @@ def _call_kwargs(
     missing = [
         p.name
         for p in parameters
-        if p.name in accepted
-        and p.default is inspect.Parameter.empty
-        and p.name not in args
+        if p.name in accepted and p.default is inspect.Parameter.empty and p.name not in args
     ]
     if missing:
         return _Refusal(
             f"`{entry.name}` is missing its `{missing[0]}` argument. The "
             f'browser opens pp.socket("{entry.name}", '
-            f'{{ {missing[0]}: ... }}).'
+            f"{{ {missing[0]}: ... }})."
         )
 
     if accepts_kwargs:
@@ -729,11 +710,7 @@ async def serve_named_socket(websocket: WebSocket) -> None:
     except Exception as e:
         print(f"[Socket Error] {entry.name}: {e}")
         traceback.print_exc()
-        message = (
-            "Internal server error"
-            if is_production_environment()
-            else f"{entry.name}: {e}"
-        )
+        message = "Internal server error" if is_production_environment() else f"{entry.name}: {e}"
         await sock.sender()._error(message)
         await sock._finish()
     finally:

@@ -21,7 +21,6 @@ def build_auth_settings() -> AuthSettings:
         default_token_validity="1h",
         # Sliding-session refresh only matters when the request flow calls auth.refresh_session().
         token_auto_refresh=False,
-
         # Route protection
         # This app-owned starter config begins public-first; switch to True only when most routes require auth.
         # Use all-private mode when only a few routes should stay public.
@@ -30,11 +29,9 @@ def build_auth_settings() -> AuthSettings:
         # Sign-in and signup stay public by default; only change this when the app explicitly needs it.
         auth_routes=["/signin", "/signup"],
         private_routes=[],  # unused when all-routes-private is True
-
         # Role-based access
         is_role_based=False,
         role_identifier="role",
-
         # RBAC policy is app-owned here; the runtime expects ROUTE/PATTERN -> [ROLES].
         # Example (when enabled):
         # role_based_routes={
@@ -42,7 +39,6 @@ def build_auth_settings() -> AuthSettings:
         #     "/admin": ["admin", "superadmin"],
         # },
         role_based_routes={},
-
         # Redirects / prefixes
         default_signin_redirect="/dashboard",
         default_signout_redirect="/signin",
