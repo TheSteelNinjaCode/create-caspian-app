@@ -396,7 +396,11 @@ async function shutdown(exitCode: number): Promise<void> {
     {
       proxy: {
         target: `http://localhost:${pythonPort}`,
-        ws: true,
+        // The backend only registers the PulsePoint WebSocket endpoint when
+        // this feature is enabled. Do not proxy upgrade requests otherwise:
+        // Uvicorn has no WebSocket protocol dependency in a socket-free app,
+        // and the attempted upgrade tears down BrowserSync with ECONNRESET.
+        ws: caspianConfig.websocket,
       },
       port: bsPort,
       online: true,
