@@ -8,7 +8,7 @@ import inspect
 import io
 from dataclasses import replace
 from types import SimpleNamespace
-from typing import Optional
+from typing import Optional, cast
 from unittest.mock import AsyncMock
 
 import main
@@ -49,7 +49,7 @@ class TestPrismaLifespan:
 
 class TestDevControlPipe:
     def test_valid_shutdown_command_stops_server(self):
-        server = SimpleNamespace(should_exit=False)
+        server = cast(main.uvicorn.Server, SimpleNamespace(should_exit=False))
 
         main._consume_dev_control_stream(
             server,
@@ -60,7 +60,7 @@ class TestDevControlPipe:
         assert server.should_exit is True
 
     def test_ignores_invalid_commands_until_pipe_closes(self):
-        server = SimpleNamespace(should_exit=False)
+        server = cast(main.uvicorn.Server, SimpleNamespace(should_exit=False))
 
         main._consume_dev_control_stream(
             server,
