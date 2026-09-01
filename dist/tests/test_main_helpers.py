@@ -1,13 +1,76 @@
-"""Unit tests for the pure helper functions in `main.py`.
+"""Unit tests for focused helper and lifecycle functions in `main.py`.
 
 These cover the app-owned logic that has no external dependencies: env
 parsing, query-param coercion, and the component-deferral HTML transform.
 """
 
 import inspect
+import io
+from dataclasses import replace
+from types import SimpleNamespace
 from typing import Optional
+from unittest.mock import AsyncMock
 
 import main
+from conftest import run_async
+
+
+class TestPrismaLifespan:
+    def test_disconnects_on_shutdown(self, monkeypatch):
+        disconnect = AsyncMock()
+        monkeypatch.setattr(main.prisma, "disconnect", disconnect)
+
+        async def exercise_lifespan():
+            async with main.prisma_lifespan(main.app):
+                disconnect.assert_not_awaited()
+
+        run_async(exercise_lifespan())
+        disconnect.assert_awaited_once_with()
+
+    def test_disabled_prisma_is_not_registered(self, monkeypatch):
+        monkeypatch.setattr(main, "cfg", replace(main.cfg, prisma=False))
+
+        assert main.prisma_lifespan not in main.get_app_lifespans()
+
+    def test_disconnects_when_another_lifespan_raises(self, monkeypatch):
+        disconnect = AsyncMock()
+        monkeypatch.setattr(main.prisma, "disconnect", disconnect)
+
+        async def exercise_lifespan():
+            try:
+                async with main.prisma_lifespan(main.app):
+                    raise RuntimeError("shutdown path")
+            except RuntimeError:
+                pass
+
+        run_async(exercise_lifespan())
+        disconnect.assert_awaited_once_with()
+
+
+class TestDevControlPipe:
+    def test_valid_shutdown_command_stops_server(self):
+        server = SimpleNamespace(should_exit=False)
+
+        main._consume_dev_control_stream(
+            server,
+            "expected-token",
+            io.StringIO("shutdown:expected-token\n"),
+        )
+
+        assert server.should_exit is True
+
+    def test_ignores_invalid_commands_until_pipe_closes(self):
+        server = SimpleNamespace(should_exit=False)
+
+        main._consume_dev_control_stream(
+            server,
+            "expected-token",
+            io.StringIO("shutdown:wrong-token\nnoop:expected-token\n"),
+        )
+
+        # EOF means the owning development orchestrator exited, so an otherwise
+        # orphaned child still shuts down cleanly.
+        assert server.should_exit is True
 
 
 class TestEnvParsing:

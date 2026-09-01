@@ -3,9 +3,12 @@ import { platform } from "os";
 import { existsSync } from "fs";
 import { join } from "path";
 import { Socket } from "net";
+import { randomBytes } from "crypto";
 
 let pythonProcess: ChildProcess | null = null;
+let pythonControlToken: string | null = null;
 let isRestarting = false;
+const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 7000;
 
 function isWindows(): boolean {
   return platform() === "win32";
@@ -114,23 +117,68 @@ async function killProcessTree(child: ChildProcess): Promise<void> {
   }
 }
 
+export function requestGracefulShutdown(
+  child: ChildProcess,
+  controlToken: string | null,
+  timeout = GRACEFUL_SHUTDOWN_TIMEOUT_MS,
+): Promise<boolean> {
+  if (child.exitCode !== null) return Promise.resolve(true);
+  const stdin = child.stdin;
+  if (!controlToken || !stdin?.writable) return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (stopped: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off("exit", onExit);
+      child.off("close", onExit);
+      resolve(stopped);
+    };
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeout);
+
+    child.once("exit", onExit);
+    child.once("close", onExit);
+    stdin.write(`shutdown:${controlToken}\n`, (error) => {
+      if (error) finish(false);
+    });
+  });
+}
+
+async function stopPythonProcess(
+  child: ChildProcess,
+  controlToken: string | null,
+): Promise<void> {
+  const stoppedGracefully = await requestGracefulShutdown(child, controlToken);
+  if (stoppedGracefully) return;
+
+  console.warn(
+    "Warning: Python server did not stop gracefully; forcing process termination.",
+  );
+  await killProcessTree(child);
+}
+
 function spawnPython(port: number, browserSyncPort?: number): ChildProcess {
   const pythonPath = getVenvPythonPath();
   const args = ["-u", "main.py"];
 
   console.log(`-> Starting Python server on port ${port}...`);
 
+  pythonControlToken = randomBytes(32).toString("hex");
   const env = {
     ...process.env,
     PYTHONUNBUFFERED: "1",
     PORT: String(port),
+    CASPIAN_DEV_CONTROL_TOKEN: pythonControlToken,
     ...(browserSyncPort
       ? { CASPIAN_BROWSER_SYNC_PORT: String(browserSyncPort) }
       : {}),
   };
 
   const child = spawn(pythonPath, args, {
-    stdio: "inherit",
+    stdio: ["pipe", "inherit", "inherit"],
     shell: false,
     detached: !isWindows(),
     env,
@@ -158,10 +206,12 @@ export async function restartPythonServer(
   try {
     console.log("-> Restarting Python server...");
     const prev = pythonProcess;
+    const prevControlToken = pythonControlToken;
     pythonProcess = null;
+    pythonControlToken = null;
 
     if (prev) {
-      await killProcessTree(prev);
+      await stopPythonProcess(prev, prevControlToken);
       await waitForPortRelease(port);
     }
 
@@ -171,10 +221,12 @@ export async function restartPythonServer(
   }
 }
 
-export function stopPythonServer(): void {
+export async function stopPythonServer(): Promise<void> {
   const prev = pythonProcess;
+  const prevControlToken = pythonControlToken;
   pythonProcess = null;
-  if (prev) killProcessTree(prev);
+  pythonControlToken = null;
+  if (prev) await stopPythonProcess(prev, prevControlToken);
 }
 
 export async function waitForHttpHealth(

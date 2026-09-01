@@ -12,6 +12,8 @@ import os
 import importlib.util
 import re
 import secrets
+import sys
+import threading
 import traceback
 import json
 import math
@@ -78,6 +80,15 @@ from collections.abc import Callable
 
 load_dotenv()
 cfg = get_config()
+
+# Prisma is optional. A project generated with `prisma: false` has no
+# `src.lib.prisma` package, so both the import and lifespan registration must be
+# behind the feature gate.
+prisma: Any = None
+if cfg.prisma:
+    from src.lib.prisma import prisma as configured_prisma
+
+    prisma = configured_prisma
 
 # Declared before the MCP block below, which needs it to decide whether an
 # unauthenticated endpoint or an open CORS policy is tolerable. Resolved
@@ -270,6 +281,21 @@ setup_auth()
 LifespanFactory = Callable[[FastAPI], AbstractAsyncContextManager[Any]]
 
 
+@asynccontextmanager
+async def prisma_lifespan(_app: FastAPI):
+    """Close every generated Prisma connection during an orderly app shutdown.
+
+    The generated client connects lazily, so entering this lifespan does not open
+    a database connection. Its shutdown half is intentionally unconditional:
+    ``disconnect()`` is idempotent and also cleans up a partially initialized pool.
+    """
+    try:
+        yield
+    finally:
+        if prisma is not None:
+            await prisma.disconnect()
+
+
 def get_app_lifespans() -> list[LifespanFactory]:
     """
     Register all application lifespan handlers here.
@@ -295,6 +321,11 @@ def get_app_lifespans() -> list[LifespanFactory]:
     config flag or runtime availability check.
     """
     lifespans: list[LifespanFactory] = []
+
+    # Keep the database alive until every later lifespan has shut down. This does
+    # not connect eagerly; it only guarantees cleanup when Uvicorn exits cleanly.
+    if cfg.prisma:
+        lifespans.append(prisma_lifespan)
 
     # MCP lifecycle
     # FastMCP needs its lifespan running so the MCP session manager starts.
@@ -1604,13 +1635,63 @@ app.add_middleware(SecurityHeadersMiddleware)
 if not IS_PRODUCTION:
     app.add_middleware(RequestDiagnosticsMiddleware)
 
+
+def _consume_dev_control_stream(
+    server: uvicorn.Server,
+    expected_token: str,
+    stream: Any,
+) -> None:
+    """Watch the private parent-process pipe for a graceful shutdown request."""
+    for raw_line in stream:
+        command, separator, token = raw_line.rstrip("\r\n").partition(":")
+        if separator and command == "shutdown" and secrets.compare_digest(token, expected_token):
+            server.should_exit = True
+            return
+
+    # The development orchestrator owns this process. If its control pipe closes,
+    # it has exited unexpectedly and the child must not remain orphaned.
+    server.should_exit = True
+
+
+def _start_dev_control_listener(
+    server: uvicorn.Server,
+    expected_token: str,
+) -> threading.Thread:
+    listener = threading.Thread(
+        target=_consume_dev_control_stream,
+        args=(server, expected_token, sys.stdin),
+        name="caspian-dev-control",
+        daemon=True,
+    )
+    listener.start()
+    return listener
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5091))
     workers = max(1, int(os.getenv("UVICORN_WORKERS", "1")))
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=port,
-        reload=False,
-        workers=workers,
-    )
+    dev_control_token = os.getenv("CASPIAN_DEV_CONTROL_TOKEN", "")
+
+    if dev_control_token:
+        # The local orchestrator uses a private stdin pipe so graceful shutdown
+        # works consistently on Windows, where SIGTERM is not available to Node
+        # child processes. Development intentionally remains single-worker.
+        server = uvicorn.Server(
+            uvicorn.Config(
+                "main:app",
+                host="0.0.0.0",
+                port=port,
+                reload=False,
+                workers=1,
+            )
+        )
+        _start_dev_control_listener(server, dev_control_token)
+        server.run()
+    else:
+        uvicorn.run(
+            "main:app",
+            host="0.0.0.0",
+            port=port,
+            reload=False,
+            workers=workers,
+        )

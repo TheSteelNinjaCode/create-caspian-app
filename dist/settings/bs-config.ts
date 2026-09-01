@@ -296,7 +296,7 @@ async function shutdown(exitCode: number): Promise<void> {
     bs.exit();
   }
 
-  stopPythonServer();
+  await stopPythonServer();
   process.exit(exitCode);
 }
 
