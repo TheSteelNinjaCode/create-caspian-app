@@ -81,19 +81,55 @@ from collections.abc import Callable
 load_dotenv()
 cfg = get_config()
 
-# Prisma is optional. A project generated with `prisma: false` has no
-# `src.lib.prisma` package, so both the import and lifespan registration must be
-# behind the feature gate.
+# Declared before the Prisma and MCP blocks below, which need it to decide
+# whether a missing generated client, an unauthenticated endpoint, or an open
+# CORS policy is tolerable. Resolved fail-closed: only an explicit development
+# APP_ENV turns the relaxations on.
+IS_PRODUCTION = is_production_environment()
+
+# Prisma is optional, and its Python ORM is *generated* rather than authored, so
+# there are two independent conditions -- the feature flag in
+# `caspian.config.json`, and whether `npx ppy generate` has actually produced
+# `src/lib/prisma/`. A project generated with `prisma: false` has no such
+# package; neither does a freshly cloned or freshly scaffolded project whose
+# schema exists but has never been generated. Both must leave the app importable,
+# so the import, the lifespan registration, and every consumer treat `prisma` as
+# possibly `None`.
+PRISMA_PACKAGE_DIR = Path(__file__).resolve().parent / "src" / "lib" / "prisma"
+
+PRISMA_NOT_GENERATED_MESSAGE = (
+    "Prisma is enabled in caspian.config.json but the Python ORM has not been "
+    "generated, so src/lib/prisma/ does not exist. Sync the database with "
+    "`npx prisma migrate dev` (or `npx prisma db push`), then run "
+    "`npx ppy generate` to generate the client."
+)
+
 prisma: Any = None
 if cfg.prisma:
-    from src.lib.prisma import prisma as configured_prisma
+    if PRISMA_PACKAGE_DIR.is_dir():
+        # Present but unimportable is a genuinely broken install (a missing
+        # driver dependency, a half-written generation). Let that traceback
+        # through rather than degrading to a confusing "not generated" hint.
+        # The ignore matches the optional MCP import below: a generated module
+        # is absent from a static checkout, so the type checker cannot see it.
+        from src.lib.prisma import prisma as configured_prisma  # type: ignore[import-not-found]
 
-    prisma = configured_prisma
-
-# Declared before the MCP block below, which needs it to decide whether an
-# unauthenticated endpoint or an open CORS policy is tolerable. Resolved
-# fail-closed: only an explicit development APP_ENV turns the relaxations on.
-IS_PRODUCTION = is_production_environment()
+        prisma = configured_prisma
+    elif IS_PRODUCTION:
+        # A deployment that enabled Prisma and shipped without the generated
+        # client is broken: every database call would fail at request time.
+        # Fail at boot instead, consistent with the fail-closed APP_ENV rule.
+        raise RuntimeError(PRISMA_NOT_GENERATED_MESSAGE)
+    else:
+        # In development this is the ordinary "I have not generated it yet"
+        # state. Warn once at boot and keep serving, so the dev stack does not
+        # die with a bare ModuleNotFoundError before a single route renders.
+        print(
+            f"[caspian] WARNING: {PRISMA_NOT_GENERATED_MESSAGE} "
+            "Database access is unavailable until then; the rest of the app runs normally.",
+            file=sys.stderr,
+            flush=True,
+        )
 
 # Resolve APP_TIMEZONE once at import so an unknown zone name fails at boot with
 # a named error, rather than on whichever request first formats a date. Only the
@@ -324,7 +360,9 @@ def get_app_lifespans() -> list[LifespanFactory]:
 
     # Keep the database alive until every later lifespan has shut down. This does
     # not connect eagerly; it only guarantees cleanup when Uvicorn exits cleanly.
-    if cfg.prisma:
+    # Gated on the client being importable, not just on the feature flag: with
+    # Prisma enabled but not yet generated there is nothing to disconnect.
+    if prisma is not None:
         lifespans.append(prisma_lifespan)
 
     # MCP lifecycle
