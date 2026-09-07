@@ -1,4 +1,4 @@
-"""Safe auto-fixer for the app (`npm run check:fix`).
+"""Safe auto-fixer for the app (`npm run test:fix`).
 
 Removes genuinely dead imports and applies ruff's other safe fixes, then runs
 the gate to report what remains. The catch it exists to handle: `pyproject.toml`

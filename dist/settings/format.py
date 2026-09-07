@@ -40,7 +40,7 @@ Usage (from the project root):
     python settings/format.py --markup   # markup only, skip ruff format
     python settings/format.py --python   # ruff format only, skip markup
 
-`npm run check:fix` runs this first, so formatting settles before the fixer and
+`npm run test:fix` runs this first, so formatting settles before the fixer and
 the gate look at the code.
 """
 

@@ -14,7 +14,7 @@ Usage (from the project root):
     python settings/check.py --only pyright # run one tool while debugging
 
 Exit code is 0 only when every selected check passes, so it works as a CI /
-pre-commit gate. Prefer `npm run check` for day-to-day use.
+pre-commit gate. Prefer `npm run test` for day-to-day use.
 """
 
 from __future__ import annotations

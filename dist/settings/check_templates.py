@@ -2,7 +2,7 @@
 
 Why this exists
 ---------------
-`npm run check` validated Python only. A route template could contain JSX --
+`npm run test` validated Python only. A route template could contain JSX --
 `{users.map(user => (<tr/>))}`, `class={...}`, `className` -- and the gate stayed
 green, because nothing in the toolchain reads `.html` files. The failure then
 surfaced only in the browser, and the worst variant surfaced nowhere at all: an
@@ -33,7 +33,7 @@ a docs `<pre>` block are both ignored:
 Usage:
 
     python settings/check_templates.py           # run standalone
-    npm run check                                # runs as part of the gate
+    npm run test                                 # runs as part of the gate
 """
 
 from __future__ import annotations
@@ -378,7 +378,7 @@ def write_fstring_baseline() -> int:
                 "_comment": (
                     "Components that still return an f-string instead of html(...). "
                     "This list may only shrink: converting one means deleting its "
-                    "line. New entries fail `npm run check`."
+                    "line. New entries fail `npm run test`."
                 ),
                 "allowed": entries,
             },

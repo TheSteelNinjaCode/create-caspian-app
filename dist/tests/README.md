@@ -7,7 +7,7 @@ Type check + lint + template lint + tests for the **application** code
 ## The command
 
 ```bash
-npm run check
+npm run test
 ```
 
 That is the single production gate. It runs **pyright** (types), **ruff**
@@ -64,7 +64,7 @@ reaches whoever owns that terminal. Read it with:
 npm run logs
 ```
 
-`npm run check` prints the same digest at the end of its run, but never lets it
+`npm run test` prints the same digest at the end of its run, but never lets it
 change the exit code — whether a route has been exercised depends on someone
 opening a browser, and a gate that flaky gets ignored. Use `--fail-on-error` if
 you want a non-zero exit in a script you control.
@@ -90,10 +90,10 @@ failure. Coverage is in `tests/test_browser_log.py`.
 
 ## Auto-fixing lint issues
 
-`npm run check` only **reports**. To auto-fix the ruff findings it lists, run:
+`npm run test` only **reports**. To auto-fix the ruff findings it lists, run:
 
 ```bash
-npm run check:fix
+npm run test:fix
 ```
 
 That runs `settings/fix.py`, which **formats first** (see below), then safely
@@ -224,12 +224,12 @@ import DialogContent` → `<x-dialog-content>`). Ruff can't parse the template, 
 it sees the import as unused — but casp resolves the tag from the module's
 globals at render time, so deleting it breaks the page.
 
-Two layers keep this safe, so `check:fix` still cleans real dead imports:
+Two layers keep this safe, so `test:fix` still cleans real dead imports:
 
 - **A raw `ruff check --fix` never deletes any import.** `F401` is marked
   `unfixable` in `pyproject.toml`, so even if someone runs ruff directly, no
   component import is ever stripped.
-- **`npm run check:fix` removes only genuinely dead imports.** `settings/fix.py`
+- **`npm run test:fix` removes only genuinely dead imports.** `settings/fix.py`
   asks ruff which files have an `F401`, skips any file that contains an import
   used as an `<x-*>` tag (leaving those whole), and removes dead imports from the
   rest via an isolated ruff run. Component-guarded files are left for the gate to
@@ -242,7 +242,7 @@ an `<x-*>` tag, so **the gate fails only on genuinely dead imports**. The
 
 ## Tools (Python dev group in `pyproject.toml`)
 
-- **pyright** — type checker. Config in `[tool.pyright]`: `include = ["main.py", "src", "settings/*.py"]` with `exclude = [".venv", "node_modules", "**/__pycache__"]`, so it checks `main.py`, all of `src` (including the generated `src/lib/prisma/**` ORM), and the top-level `settings/*.py` tooling scripts (mirroring ruff's `include`). Pylance reads the same config, so the IDE and `npm run check` agree.
+- **pyright** — type checker. Config in `[tool.pyright]`: `include = ["main.py", "src", "settings/*.py"]` with `exclude = [".venv", "node_modules", "**/__pycache__"]`, so it checks `main.py`, all of `src` (including the generated `src/lib/prisma/**` ORM), and the top-level `settings/*.py` tooling scripts (mirroring ruff's `include`). Pylance reads the same config, so the IDE and `npm run test` agree.
 - **ruff** — linter. Config in `[tool.ruff]`; correctness-focused rules.
 - **pytest** — test runner. Tests live in `tests/`.
 - **djlint** — markup formatter, driven by `settings/format.py`. Invoked with explicit flags (`--profile jinja --indent 2 --max-line-length 120 --preserve-blank-lines`) rather than a `[tool.djlint]` config block, because blocks are formatted in a temp directory outside the project where that config would not be found.

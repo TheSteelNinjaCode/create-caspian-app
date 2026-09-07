@@ -6,7 +6,7 @@ dependencies = []
 
 [dependency-groups]
 # Dev-only tooling for the app's test + static-analysis command.
-# Installed into .venv with `uv sync --group dev`; surfaced via `npm run check`.
+# Installed into .venv with `uv sync --group dev`; surfaced via `npm run test`.
 dev = []
 
 [tool.uv]
