@@ -130,7 +130,7 @@ async function cleanupStaleWatcher(): Promise<void> {
   }
 
   console.warn(
-    `[tailwind] Found stale PostCSS watcher (PID ${pid}), stopping it before restart.`,
+    `[css] Found stale PostCSS watcher (PID ${pid}), stopping it before restart.`,
   );
   await killProcessTree(pid);
   await rmAsync(watcherPidFile, { force: true });
@@ -185,31 +185,35 @@ function createWatchers(rebuildWorker: DebouncedWorker): ClosableWatcher[] {
     rebuildWorker.schedule(relPath);
   };
 
+  // Tailwind scans markup for class names, so any authored file can change the
+  // generated CSS. Plain CSS has no such scan: only stylesheets matter.
   const watchers: ClosableWatcher[] = [
     createSrcWatcher(join(process.cwd(), "src", "**", "*"), {
-      exts: [".css", ".html", ".js", ".py"],
+      exts: caspianConfig.tailwindcss
+        ? [".css", ".html", ".js", ".py"]
+        : [".css"],
       ignored: WATCH_IGNORES,
       awaitWriteFinish: DEFAULT_AWF,
-      logPrefix: "tailwind:src",
+      logPrefix: "css:src",
       onEvent: scheduleRebuild,
     }),
     createSrcWatcher(join(process.cwd(), "postcss.config.js"), {
       exts: [".js"],
       ignored: WATCH_IGNORES,
       awaitWriteFinish: DEFAULT_AWF,
-      logPrefix: "tailwind:config",
+      logPrefix: "css:config",
       onEvent: scheduleRebuild,
     }),
   ];
 
   const tsRoot = join(process.cwd(), "ts");
-  if (caspianConfig.typescript && existsSync(tsRoot)) {
+  if (caspianConfig.tailwindcss && caspianConfig.typescript && existsSync(tsRoot)) {
     watchers.push(
       createSrcWatcher(join(tsRoot, "**", "*"), {
         exts: [".js", ".jsx", ".ts", ".tsx"],
         ignored: WATCH_IGNORES,
         awaitWriteFinish: DEFAULT_AWF,
-        logPrefix: "tailwind:ts",
+        logPrefix: "css:ts",
         onEvent: scheduleRebuild,
       }),
     );
@@ -235,13 +239,13 @@ async function runWatchMode(): Promise<void> {
 
       if (exitCode !== 0) {
         console.error(
-          `[tailwind] PostCSS exited with code ${exitCode}. Watching for the next change...`,
+          `[css] PostCSS exited with code ${exitCode}. Watching for the next change...`,
         );
       }
     } catch (error) {
       console.error(error);
     }
-  }, 150, "tailwind");
+  }, 150, "css");
 
   sourceWatchers.push(...createWatchers(rebuildWorker));
 
@@ -250,7 +254,7 @@ async function runWatchMode(): Promise<void> {
 
     if (exitCode !== 0) {
       console.error(
-        `[tailwind] Initial PostCSS build exited with code ${exitCode}. Watching for the next change...`,
+        `[css] Initial PostCSS build exited with code ${exitCode}. Watching for the next change...`,
       );
     }
   } catch (error) {
