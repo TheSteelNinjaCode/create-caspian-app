@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit|MultiEdit|Bash|apply_patch|shell|exec_command|write_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node settings/dev-hold-hook.ts",
+            "statusMessage": "Holding dev reloads",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node settings/dev-hold.ts release --quiet",
+            "statusMessage": "Applying queued dev reloads",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "matcher": "Edit|Write|NotebookEdit|MultiEdit|Bash|edit|create|str_replace|bash|shell|run_in_terminal",
+        "command": "node settings/dev-hold-hook.ts",
+        "timeoutSec": 10
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node settings/dev-hold.ts release --quiet",
+        "timeoutSec": 10
+      }
+    ],
+    "SessionEnd": [
+      {
+        "type": "command",
+        "command": "node settings/dev-hold.ts release --quiet",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}

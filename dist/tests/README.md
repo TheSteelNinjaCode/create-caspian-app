@@ -19,7 +19,7 @@ location to fix.
 While debugging you can narrow to one tool:
 
 ```bash
-uv run python settings/check.py --only pyright   # or ruff / templates / pytest
+uv run python settings/check.py --only pyright   # or ruff / templates / node / pytest
 ```
 
 ## The `templates` check

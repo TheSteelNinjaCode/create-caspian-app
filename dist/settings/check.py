@@ -1,6 +1,7 @@
 """App-level quality gate: type check + lint + template lint + tests in one command.
 
-Runs the four app-owned checks against `main.py`, `src/**`, and authored markup,
+Runs the five app-owned checks against `main.py`, `src/**`, authored markup, and the
+TypeScript dev tooling in `settings/`,
 then prints a single, AI-friendly list of problems as `path:line:col` with the
 message, so an agent (or a human) is told exactly which file and location to fix.
 
@@ -23,6 +24,7 @@ import argparse
 import itertools
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -266,6 +268,58 @@ def run_templates() -> Result:
     return Result("templates", ok=not issues, issues=issues)
 
 
+def run_node_tests() -> Result:
+    """Run the TypeScript tests for the dev-stack tooling in `settings/`.
+
+    pyright/ruff/pytest cover Python, which left the dev tooling that is written
+    in TypeScript with no coverage at all -- including the reload hold, whose
+    whole job is to keep an agent's editing run from restarting the Python server
+    once per edit. A silent regression there is invisible from a green gate and
+    costs a restart storm on the next feature branch.
+
+    Invoked as `node --import tsx`, not `npx tsx`: `npx` resolves to a `.cmd`
+    shim on Windows that `subprocess` cannot exec from a list argv, while `node`
+    is a real executable on every platform the gate runs on.
+    """
+    tests = sorted(str(p.relative_to(PROJECT_ROOT)) for p in PROJECT_ROOT.glob("settings/*.test.ts"))
+    if not tests:
+        return Result("node", ok=True, note="no TypeScript tests found")
+
+    proc = _run_streamed(["node", "--import", "tsx", "--test", *tests])
+    ok = proc.returncode == 0
+
+    issues: list[Issue] = []
+    if not ok:
+        # The spec reporter ends with a `failing tests:` block that pairs a
+        # `test at path:line:col` line with the failing test's name.
+        pending: tuple[str, int, int] | None = None
+        for raw in (proc.stdout + proc.stderr).splitlines():
+            line = raw.strip()
+            location = re.match(r"^test at (.+):(\d+):(\d+)$", line)
+            if location:
+                pending = (location.group(1), int(location.group(2)), int(location.group(3)))
+                continue
+            if pending and line.startswith("✖"):
+                name = re.sub(r"\s*\([\d.]+ms\)$", "", line[1:].strip())
+                path, line_no, column = pending
+                issues.append(
+                    Issue(
+                        path=path.replace("\\", "/"),
+                        line=line_no,
+                        column=column,
+                        tool="node",
+                        code="test",
+                        message=name or "test failed",
+                    )
+                )
+                pending = None
+
+    note = ""
+    if not ok and not issues:
+        note = "node --test failed"
+    return Result("node", ok=ok, issues=issues, note=note)
+
+
 def run_pytest() -> Result:
     # `-o addopts=` drops the ini `-q` so `-v` can print one live line per test
     # (the "which test is running" progress); `-rfE` keeps the `FAILED nodeid -
@@ -375,7 +429,7 @@ def main() -> int:
     parser.add_argument(
         "--only",
         action="append",
-        choices=["pyright", "ruff", "templates", "pytest"],
+        choices=["pyright", "ruff", "templates", "node", "pytest"],
         help="Run only the named tool(s). Repeatable. Default: all.",
     )
     parser.add_argument(
@@ -385,7 +439,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    selected = args.only or ["pyright", "ruff", "templates", "pytest"]
+    selected = args.only or ["pyright", "ruff", "templates", "node", "pytest"]
 
     print()
     print(bold("Caspian app checks") + "  (live progress)")
@@ -398,12 +452,14 @@ def main() -> int:
         results.append(_execute("ruff", run_ruff, streamed=False))
     if "templates" in selected:
         results.append(_execute("templates", run_templates, streamed=False))
+    if "node" in selected:
+        results.append(_execute("node", run_node_tests, streamed=True))
     if "pytest" in selected:
         results.append(_execute("pytest", run_pytest, streamed=True))
 
     ok = print_report(results)
 
-    # Browser status is reported, never enforced. The four tools above are
+    # Browser status is reported, never enforced. The five tools above are
     # deterministic; whether a route has been exercised in a browser depends on
     # someone clicking around, so folding it into the exit code would make the
     # gate flaky and people would learn to ignore it. Printing it here is enough:
