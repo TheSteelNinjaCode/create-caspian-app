@@ -27,6 +27,7 @@ import {
   endBrowserLogSession,
   startBrowserLogSession,
 } from "./dev-log-bridge.js";
+import { evaluateDevHold, isDevHoldActive } from "./dev-hold.js";
 
 const { __dirname } = getFileMeta();
 const bs: BrowserSyncInstance = browserSync.create();
@@ -253,6 +254,37 @@ const changeCoordinator = new SettledBatchWorker<string>(
   },
   1500,
   "bs-change-coordinator",
+  // The 1500 ms quiet period batches a human's burst-save, but an agent's gap
+  // between two edits is a tool round-trip and always exceeds it, so every edit
+  // would otherwise cost a full restart plus a reload of every open tab. While
+  // an agent holds the dev stack, keep queueing and drain the whole run at once.
+  () => isDevHoldActive(),
+  (deferring, pending) => {
+    if (deferring) {
+      const status = evaluateDevHold();
+      const owner = status.hold ? status.hold.owner : "agent";
+      console.log(
+        chalk.yellow(
+          `-> Dev hold active (${owner} editing); holding ${pending.size} change(s). ` +
+            "Run `npm run dev:resume` to reload now.",
+        ),
+      );
+      return;
+    }
+
+    const status = evaluateDevHold();
+    if (status.reason === "stale" || status.reason === "expired") {
+      console.log(
+        chalk.yellow(
+          `-> Dev hold ${status.reason === "stale" ? "went stale" : "hit its time cap"}; ` +
+            "resuming normal reloads.",
+        ),
+      );
+      return;
+    }
+
+    console.log(chalk.cyan("-> Dev hold released; applying held changes..."));
+  },
 );
 
 function isIgnoredPublicPath(absPath: string): boolean {

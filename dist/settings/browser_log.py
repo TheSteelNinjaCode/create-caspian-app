@@ -58,6 +58,7 @@ import argparse
 import json
 import socket
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -362,10 +363,40 @@ def _print_errors(errors: list[dict[str, Any]]) -> None:
             print(gray(f"        {frame}"))
 
 
+def _print_dev_hold_warning() -> None:
+    """
+    Warn when a dev hold is suppressing reloads.
+
+    While an agent holds the dev stack, no restart or reload has happened since
+    its edits landed, so every line below was produced by code that has already
+    changed. Reading this digest as current state is exactly how an agent signs
+    off on a bug it has not actually retested.
+    """
+    try:
+        hold = json.loads((PROJECT_ROOT / ".casp" / "dev-hold.json").read_text("utf-8"))
+        touched_at = float(hold["touchedAt"]) / 1000
+        acquired_at = float(hold["acquiredAt"]) / 1000
+        edits = int(hold["edits"])
+    except OSError, ValueError, KeyError, TypeError:
+        return
+
+    now = time.time()
+    # Mirrors STALE_HOLD_MS / MAX_HOLD_MS in settings/dev-hold.ts.
+    if now - touched_at > 120 or now - acquired_at > 600:
+        return
+
+    print()
+    print(yellow(bold("  DEV HOLD ACTIVE -- this digest is stale.")))
+    print(gray(f"        {edits} edit(s) are queued but not applied: the server has not"))
+    print(gray("        restarted and the browser has not reloaded since they landed."))
+    print(gray("        Run `npm run dev:resume`, reload the route, then re-run this command."))
+
+
 def print_report(report: LogReport) -> None:
     print()
     print(bold("Browser log") + gray(f"  ({LOG_FILE.relative_to(PROJECT_ROOT)})"))
     print("=" * 60)
+    _print_dev_hold_warning()
 
     if report.session == "live":
         age = _age(report.started)

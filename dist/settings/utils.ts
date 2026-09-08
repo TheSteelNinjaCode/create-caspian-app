@@ -143,17 +143,29 @@ export class DebouncedWorker {
  * period has elapsed. `onSettled` only runs when no newer work is pending, so
  * callers can safely perform one user-visible action (such as a browser
  * reload) after the final batch instead of after every intermediate batch.
+ *
+ * An optional `shouldDefer` predicate suspends draining entirely without losing
+ * work: pending items keep accumulating and the quiet period re-arms, so once
+ * the predicate clears, everything collected in the meantime drains as a single
+ * batch with a single settle. That is what lets an agent's whole editing run
+ * cost one restart and one reload instead of one of each per edit.
  */
 export class SettledBatchWorker<T> {
   private timer: NodeJS.Timeout | null = null;
   private pending = new Set<T>();
   private running = false;
+  private deferring = false;
 
   constructor(
     private work: (items: ReadonlySet<T>) => Promise<void> | void,
     private onSettled: () => Promise<void> | void,
     private quietMs = 1200,
     private name = "batch",
+    private shouldDefer?: (pending: ReadonlySet<T>) => boolean,
+    private onDeferStateChange?: (
+      deferring: boolean,
+      pending: ReadonlySet<T>,
+    ) => void,
   ) {}
 
   schedule(item: T) {
@@ -172,6 +184,15 @@ export class SettledBatchWorker<T> {
   private async drain() {
     if (this.running) return;
     if (this.pending.size === 0) return;
+
+    // Checked before anything is consumed, so a deferred batch keeps every
+    // queued item and simply waits for another quiet period to re-test.
+    if (this.shouldDefer?.(this.pending)) {
+      this.setDeferring(true);
+      this.armQuietPeriod();
+      return;
+    }
+    this.setDeferring(false);
 
     const batch = new Set(this.pending);
     this.pending.clear();
@@ -195,6 +216,13 @@ export class SettledBatchWorker<T> {
     } catch (err) {
       console.error(`[${this.name}] settle error:`, err);
     }
+  }
+
+  /** Reports edges only, so a long hold logs once instead of every quiet period. */
+  private setDeferring(deferring: boolean) {
+    if (this.deferring === deferring) return;
+    this.deferring = deferring;
+    this.onDeferStateChange?.(deferring, this.pending);
   }
 }
 
