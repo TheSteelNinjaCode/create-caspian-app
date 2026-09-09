@@ -47,14 +47,16 @@ def fake_request():
         method: str = "GET",
         path: str = "/",
         query_params: Optional[dict] = None,
+        cookies: Optional[dict] = None,
     ) -> SimpleNamespace:
         store: dict = session if session is not None else {}
         return SimpleNamespace(
             session=store,
             state=SimpleNamespace(session=store),
             headers=headers if headers is not None else {},
+            cookies=cookies if cookies is not None else {},
             method=method,
-            url=SimpleNamespace(path=path),
+            url=SimpleNamespace(path=path, query=""),
             query_params=query_params if query_params is not None else {},
         )
 

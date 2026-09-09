@@ -281,7 +281,9 @@ def run_node_tests() -> Result:
     shim on Windows that `subprocess` cannot exec from a list argv, while `node`
     is a real executable on every platform the gate runs on.
     """
-    tests = sorted(str(p.relative_to(PROJECT_ROOT)) for p in PROJECT_ROOT.glob("settings/*.test.ts"))
+    tests = sorted(
+        str(p.relative_to(PROJECT_ROOT)) for p in PROJECT_ROOT.glob("settings/*.test.ts")
+    )
     if not tests:
         return Result("node", ok=True, note="no TypeScript tests found")
 
