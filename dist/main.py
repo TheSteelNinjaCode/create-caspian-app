@@ -271,7 +271,10 @@ class MCPAuthMiddleware:
         await self.app(scope, receive, send)
 
     async def _deny(self, send: Send, status_code: int, message: str):
-        response = JSONResponse({"error": message}, status_code=status_code)
+        headers = {}
+        if status_code == 401:
+            headers["WWW-Authenticate"] = 'Bearer realm="Caspian MCP"'
+        response = JSONResponse({"error": message}, status_code=status_code, headers=headers)
 
         async def receive_empty_body():
             return {"type": "http.request", "body": b"", "more_body": False}
@@ -1510,6 +1513,18 @@ register_rpc_routes(app)
 
 # Mount the FastMCP app at /mcp so the endpoint is exactly /mcp.
 if mcp_app is not None:
+    # Starlette's automatic mount redirect builds an absolute URL from the
+    # incoming ASGI scheme. Some edge proxies do not forward that scheme, which
+    # can make an HTTPS request redirect to HTTP. A relative Location header
+    # preserves the client's original origin and keeps POST bodies with 307.
+    @app.api_route(
+        "/mcp",
+        methods=["GET", "HEAD", "POST", "DELETE", "OPTIONS"],
+        include_in_schema=False,
+    )
+    async def redirect_mcp_to_canonical_path():
+        return RedirectResponse(url="/mcp/", status_code=307)
+
     app.mount("/mcp", mcp_app)
 
 # ====
